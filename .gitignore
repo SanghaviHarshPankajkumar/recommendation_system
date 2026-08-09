@@ -26,21 +26,8 @@ Thumbs.db
 .agents/
 .docx_review/
 
-# Generated experiment artifacts (models, logs, processed datasets)
-outputs/
-*.pt
-*.pth
-*.ckpt
-*.onnx
-*.log
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
-
-# Raw datasets are large and/or redistributed under their own licenses.
-# Keep datasets/README.md and the small EdNet content metadata CSVs tracked.
-datasets/**/*.zip
-datasets/**/raw/
+# Datasets and generated experiment artifacts are versioned through Git LFS.
+# See .gitattributes for the LFS-managed paths.
 datasets/**/__MACOSX/
 datasets/**/*.DS_Store
 

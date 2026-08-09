@@ -18,12 +18,12 @@ This is a research implementation. Offline results are educational proxies and m
 
 ```text
 configs/       Reproducible JSON configurations for each phase
-datasets/      Dataset instructions and tracked EdNet content metadata
+datasets/      Raw benchmark datasets, metadata, and setup notes (Git LFS)
 notebooks/     Space for exploratory notebooks
 scripts/       Command-line entry points
 src/           Python package (`edu_recommender`)
 tests/         Unit and integration tests
-outputs/       Generated data, graphs, checkpoints, and reports (ignored)
+outputs/       Generated data, graphs, sequences, checkpoints, and reports (Git LFS)
 ```
 
 ## Requirements
@@ -35,11 +35,13 @@ outputs/       Generated data, graphs, checkpoints, and reports (ignored)
 
 ## Setup
 
-Clone the repository and install the locked dependencies:
+Install Git LFS, clone the repository, and install the locked dependencies:
 
 ```powershell
+git lfs install
 git clone https://github.com/SanghaviHarshPankajkumar/recommendation_system.git
 cd recommendation_system
+git lfs pull
 uv sync --dev
 ```
 
@@ -54,14 +56,16 @@ python -m pip install "pytest>=8,<10"
 
 ## Dataset setup
 
-Large raw datasets are intentionally excluded from Git because individual source files exceed GitHub's file-size limit and redistribution is governed by the dataset licenses. The small EdNet content metadata files required by the pipeline are included.
+Raw datasets and generated experiment artifacts are stored with Git LFS because individual files exceed GitHub's normal file-size limit. The setup commands above download the dataset files, processed data, graphs, sequences, and checkpoints. Subsequent pulls download only new or changed LFS objects; locally cached objects are reused.
 
-Download the datasets from their official sources:
+The repository contains local copies for reproducibility, but usage and redistribution remain subject to each dataset's upstream license.
+
+Official dataset sources and provenance:
 
 - EdNet: <https://github.com/riiid/ednet>
 - OULAD: <https://analyse.kmi.open.ac.uk/open_dataset>
 
-Place them in this structure:
+The LFS checkout uses this structure:
 
 ```text
 datasets/
@@ -104,7 +108,7 @@ For complete preprocessing, use:
 uv run python scripts/run_full_preprocessing.py --config configs/full_preprocessing.json
 ```
 
-Each phase expects the preceding phase's output. Generated artifacts go under `outputs/` and are not committed.
+Each phase expects the preceding phase's output. Generated artifacts go under `outputs/` and are versioned through Git LFS so teammates can reproduce the current project state without rerunning every completed phase.
 
 ## Tests
 
@@ -123,7 +127,7 @@ git commit -m "Describe the change"
 git push -u origin feature/short-description
 ```
 
-Open a pull request into `master`. Do not commit raw datasets, generated outputs, model checkpoints, virtual environments, or secrets. If you add a new dependency, update both `pyproject.toml` and `uv.lock`.
+Open a pull request into `master`. Git LFS manages `datasets/` and `outputs/`; run `git lfs status` before committing changes to those directories. Never commit virtual environments or secrets. If you add a new dependency, update both `pyproject.toml` and `uv.lock`.
 
 For the detailed architecture, data flow, inference contract, and evaluation metrics, read [`PROJECT_FLOW_GUIDE.md`](PROJECT_FLOW_GUIDE.md).
 
@@ -132,4 +136,4 @@ For the detailed architecture, data flow, inference contract, and evaluation met
 - EdNet is published under CC BY-NC 4.0 for research/non-commercial use; verify the upstream terms before use or redistribution.
 - OULAD has its own upstream terms; review them on the official dataset page.
 
-Only code and small metadata needed to describe or run the project are versioned here. Each teammate is responsible for downloading the raw datasets from the official sources.
+Dataset files and generated artifacts in this repository are stored through Git LFS. Teammates should still consult the official sources for current licensing and provenance information.
