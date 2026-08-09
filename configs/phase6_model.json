@@ -1,0 +1,29 @@
+{
+  "graph_root": "outputs/phase4_graphs",
+  "sequence_root": "outputs/phase5_sequences",
+  "output_root": "outputs/phase6_model",
+  "seed": 42,
+  "use_cuda": true,
+  "cpu_threads": 2,
+  "window_length": 128,
+  "batch_size": 2,
+  "smoke_steps": 3,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "gradient_clip_norm": 1.0,
+  "model": {
+    "state_dim": 64,
+    "num_heads": 4,
+    "transformer_layers": 2,
+    "graph_layers": 2,
+    "feedforward_dim": 128,
+    "max_sequence_length": 127,
+    "dropout": 0.1
+  },
+  "loss_weights": {
+    "item_weight": 1.0,
+    "action_weight": 0.25,
+    "correctness_weight": 0.5,
+    "mastery_weight": 0.5
+  }
+}

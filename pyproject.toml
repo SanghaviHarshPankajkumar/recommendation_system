@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowledge-aware-edu-recommender"
+version = "0.1.0"
+description = "Knowledge-aware offline RL research pipeline for EdNet and OULAD"
+requires-python = ">=3.11"
+dependencies = [
+  "d3rlpy==2.8.1",
+  "gymnasium==1.0.0",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "torch>=2.13",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<10",
+]

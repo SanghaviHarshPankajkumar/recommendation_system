@@ -1,0 +1,28 @@
+{
+  "seed": 42,
+  "run_name": "full_preprocessing",
+  "paths": {
+    "ednet_zip": "datasets/ednet/EdNet-KT3.zip",
+    "ednet_questions": "datasets/ednet/metadata/contents/questions.csv",
+    "ednet_lectures": "datasets/ednet/metadata/contents/lectures.csv",
+    "oulad_raw": "datasets/oulad/raw",
+    "output_dir": "outputs/full_preprocessing"
+  },
+  "full_preprocessing": {
+    "resume": true,
+    "minimum_free_gib": 4.0,
+    "ednet_batch_users": 1000,
+    "ednet_user_limit": null,
+    "oulad_chunk_size": 100000,
+    "oulad_vle_row_limit": null,
+    "oulad_static_batch_enrolments": 1000,
+    "session_gap_minutes": 30
+  },
+  "split": {
+    "train": 0.70,
+    "validation": 0.15,
+    "test": 0.15,
+    "minimum_events_for_holdout": 5
+  }
+}
+

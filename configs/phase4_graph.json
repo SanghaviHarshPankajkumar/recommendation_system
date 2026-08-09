@@ -1,0 +1,13 @@
+{
+  "ednet_metadata_dir": "datasets/ednet/metadata/contents",
+  "oulad_raw_dir": "datasets/oulad/raw",
+  "ednet_train_dir": "outputs/full_preprocessing/ednet/train",
+  "output_root": "outputs/phase4_graphs",
+  "chunksize": 250000,
+  "prerequisite_thresholds": {
+    "min_transition_support": 100,
+    "min_conditional_support": 30,
+    "min_direction_confidence": 0.65,
+    "min_performance_lift": 0.05
+  }
+}

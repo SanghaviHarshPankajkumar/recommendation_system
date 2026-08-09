@@ -1,0 +1,29 @@
+{
+  "paths": {
+    "sequence_root": "outputs/phase5_sequences",
+    "graph_root": "outputs/phase4_graphs",
+    "output_root": "outputs/phase8_offline_environment"
+  },
+  "split": "train",
+  "state_dim": 64,
+  "max_history": 127,
+  "max_concepts_per_event": 9,
+  "min_train_support": 5,
+  "mastery_threshold": 0.7,
+  "enforce_prerequisites": false,
+  "avoid_immediate_repeat": false,
+  "max_episode_steps": 128,
+  "ednet_session_gap_hours": 8.0,
+  "reward_clip": 1.0,
+  "reward_weights": {
+    "mastery_progression": 1.0,
+    "correctness": 0.25,
+    "score": 0.25,
+    "engagement": 0.05,
+    "time_cost": 0.05,
+    "prerequisite_violation": 0.25,
+    "repetition": 0.1,
+    "dropout": 1.0
+  },
+  "development_max_episodes": 4
+}

@@ -1,0 +1,43 @@
+{
+  "graph_root": "outputs/phase4_graphs",
+  "sequence_root": "outputs/phase5_sequences",
+  "output_root": "outputs/phase7_pretraining_micro_pilot",
+  "datasets": ["ednet", "oulad"],
+  "variants": ["popularity", "sequence_only", "full"],
+  "selection_split": "validation",
+  "selection_metric": "validation_total_loss",
+  "seed": 42,
+  "use_cuda": true,
+  "cpu_threads": 2,
+  "window_length": 128,
+  "max_concepts_per_event": 9,
+  "batch_size": 2,
+  "epochs": 1,
+  "max_train_windows": 20,
+  "max_validation_windows": 10,
+  "max_ranking_examples": 20,
+  "ranking_ks": [5, 10, 20],
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "warmup_steps": 2,
+  "minimum_lr_ratio": 0.1,
+  "gradient_clip_norm": 1.0,
+  "early_stopping_patience": 2,
+  "early_stopping_min_delta": 0.0001,
+  "resume_checkpoint": null,
+  "model": {
+    "state_dim": 64,
+    "num_heads": 4,
+    "transformer_layers": 2,
+    "graph_layers": 2,
+    "feedforward_dim": 128,
+    "max_sequence_length": 127,
+    "dropout": 0.1
+  },
+  "loss_weights": {
+    "item_weight": 1.0,
+    "action_weight": 0.25,
+    "correctness_weight": 0.5,
+    "mastery_weight": 0.5
+  }
+}

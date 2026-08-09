@@ -1,0 +1,13 @@
+{
+  "preprocessing_root": "outputs/full_preprocessing",
+  "graph_root": "outputs/phase4_graphs",
+  "ednet_metadata_dir": "datasets/ednet/metadata/contents",
+  "oulad_raw_dir": "datasets/oulad/raw",
+  "output_root": "outputs/phase5_sequences",
+  "chunksize": 250000,
+  "min_train_support": 5,
+  "windowing": {
+    "max_length": 128,
+    "stride": 64
+  }
+}

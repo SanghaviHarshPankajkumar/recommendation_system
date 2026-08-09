@@ -1,0 +1,53 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and package metadata
+.venv/
+venv/
+env/
+.uv-cache/
+*.egg-info/
+build/
+dist/
+
+# Editors, operating systems, and local tooling
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.qodo/
+.agents/
+.docx_review/
+
+# Generated experiment artifacts (models, logs, processed datasets)
+outputs/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Raw datasets are large and/or redistributed under their own licenses.
+# Keep datasets/README.md and the small EdNet content metadata CSVs tracked.
+datasets/**/*.zip
+datasets/**/raw/
+datasets/**/__MACOSX/
+datasets/**/*.DS_Store
+
+# Notebook-generated checkpoints
+.ipynb_checkpoints/
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example

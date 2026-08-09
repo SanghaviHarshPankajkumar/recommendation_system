@@ -1,0 +1,42 @@
+# Project Knowledge Checklist
+
+- Project objective and recommendation problem
+- EdNet-KT3 dataset basics
+- OULAD dataset basics
+- Common event schema
+- Student timelines and sessions
+- Train-validation-test temporal splitting
+- Data leakage prevention
+- Knowledge graph nodes, edges, and prerequisites
+- Sequence construction, padding, and causal history
+- Categorical embeddings and numerical features
+- Transformer fundamentals
+- Relational graph neural network fundamentals
+- Concept mastery estimation
+- Gated feature fusion
+- 64-dimensional student-state representation
+- Supervised multitask pretraining
+- Reinforcement learning fundamentals
+- Observation space
+- Discrete action space
+- Historical behaviour policy
+- Dynamic action masking
+- Reward and return
+- Discount factor and episode termination
+- Offline trajectory construction
+- Logged actions and source of truth
+- Counterfactual-outcome limitation
+- Behaviour Cloning (BC)
+- Implicit Q-Learning (IQL)
+- Conservative Q-Learning (CQL)
+- Gymnasium environment interface
+- d3rlpy offline-RL library
+- Behaviour support and out-of-distribution actions
+- Ranking evaluation metrics
+- Predictive evaluation metrics
+- Educational-proxy metrics
+- Offline policy evaluation
+- Ablation studies
+- Reproducibility and experiment configuration
+- Current implementation and training status
+

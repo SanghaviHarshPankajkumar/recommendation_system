@@ -1,0 +1,29 @@
+{
+  "seed": 42,
+  "run_name": "phase1_3_smoke",
+  "paths": {
+    "ednet_zip": "datasets/ednet/EdNet-KT3.zip",
+    "ednet_questions": "datasets/ednet/metadata/contents/questions.csv",
+    "ednet_lectures": "datasets/ednet/metadata/contents/lectures.csv",
+    "oulad_raw": "datasets/oulad/raw",
+    "output_dir": "outputs/phase1_3_smoke"
+  },
+  "profiling": {
+    "ednet_sample_users": 100,
+    "oulad_vle_max_rows": 100000,
+    "chunk_size": 50000
+  },
+  "preprocessing": {
+    "ednet_max_users": 100,
+    "oulad_vle_max_rows": 100000,
+    "session_gap_minutes": 30,
+    "output_format": "csv.gz"
+  },
+  "split": {
+    "train": 0.70,
+    "validation": 0.15,
+    "test": 0.15,
+    "minimum_events_for_holdout": 5
+  }
+}
+

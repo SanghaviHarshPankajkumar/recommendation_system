@@ -1,0 +1,38 @@
+{
+  "paths": {
+    "sequence_root": "outputs/phase5_sequences",
+    "output_root": "outputs/phase9_d3rlpy"
+  },
+  "dataset": "both",
+  "development_max_episodes": 4,
+  "environment": {
+    "split": "train",
+    "state_dim": 64,
+    "max_history": 127,
+    "min_train_support": 5,
+    "mastery_threshold": 0.7,
+    "enforce_prerequisites": false,
+    "avoid_immediate_repeat": false,
+    "max_episode_steps": 128,
+    "ednet_session_gap_hours": 8.0,
+    "reward_clip": 1.0
+  },
+  "algorithms": {
+    "discrete_bc": {
+      "batch_size": 256,
+      "learning_rate": 0.001,
+      "gamma": 0.99
+    },
+    "discrete_cql": {
+      "batch_size": 64,
+      "learning_rate": 0.0000625,
+      "gamma": 0.99,
+      "alpha": 1.0
+    }
+  },
+  "training_enabled": false,
+  "notes": {
+    "iql": "d3rlpy 2.8.1 IQL is continuous-action only; discrete IQL is not configured here.",
+    "action_masks": "Eligibility masks remain sparse external metadata and are enforced during recommendation inference."
+  }
+}
