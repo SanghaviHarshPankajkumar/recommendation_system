@@ -110,6 +110,16 @@ uv run python scripts/run_full_preprocessing.py --config configs/full_preprocess
 
 Each phase expects the preceding phase's output. Generated artifacts go under `outputs/` and are versioned through Git LFS so teammates can reproduce the current project state without rerunning every completed phase.
 
+## Local experiment dashboard
+
+Launch the CPU experiment UI with:
+
+```powershell
+.venv\Scripts\python.exe scripts\experiment_dashboard.py
+```
+
+Open <http://127.0.0.1:8765/>. The dashboard can prepare bounded Phase 9 episode sets, train and validate Behaviour Cloning, train student-state model variants, change common hyperparameters, run multiple experiments, and display live per-step accuracy and logs. Phase 9 runs remain developmental while they use provisional state vectors.
+
 ## Tests
 
 ```powershell

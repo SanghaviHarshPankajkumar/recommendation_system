@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Learning Policy Lab</title>
+  <style>
+    :root { --ink:#15211c; --muted:#62706a; --paper:#f4f1e8; --panel:#fffdf7; --line:#d8d5ca; --green:#176b4d; --mint:#d9f2e6; --orange:#ed8b38; --red:#b43e3e; --blue:#315ca8; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:radial-gradient(circle at 15% 5%,#fff 0,transparent 28%),var(--paper); font:15px/1.45 Inter,ui-sans-serif,system-ui,sans-serif; }
+    header { padding:34px 5vw 24px; border-bottom:1px solid var(--line); display:flex; align-items:end; justify-content:space-between; gap:24px; }
+    h1 { margin:0; font-family:Georgia,serif; font-size:clamp(32px,5vw,58px); letter-spacing:-.04em; font-weight:500; }
+    .eyebrow { color:var(--green); font-weight:800; letter-spacing:.15em; text-transform:uppercase; font-size:11px; }
+    .subtitle { color:var(--muted); max-width:660px; margin:8px 0 0; }
+    .pulse { display:flex; align-items:center; gap:8px; color:var(--green); font-weight:700; white-space:nowrap; }
+    .pulse i { width:10px; height:10px; border-radius:50%; background:#27ad76; box-shadow:0 0 0 6px #27ad7620; }
+    main { padding:28px 5vw 60px; display:grid; grid-template-columns:minmax(300px,390px) minmax(0,1fr); gap:24px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:18px; box-shadow:0 12px 40px #25352c0a; }
+    .config { padding:22px; position:sticky; top:18px; align-self:start; }
+    h2,h3 { margin:0; font-weight:750; letter-spacing:-.02em; }
+    .segmented { display:grid; grid-template-columns:1fr 1fr; gap:5px; background:#e8e5dc; padding:5px; border-radius:12px; margin:18px 0; }
+    .segmented button { border:0; background:transparent; padding:10px; border-radius:9px; font-weight:750; cursor:pointer; color:var(--muted); }
+    .segmented button.active { background:#fff; color:var(--ink); box-shadow:0 2px 8px #0001; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    label { display:flex; flex-direction:column; gap:5px; color:var(--muted); font-size:12px; font-weight:700; }
+    label.wide { grid-column:1/-1; }
+    input,select { width:100%; padding:10px 11px; border:1px solid var(--line); background:#fff; border-radius:9px; color:var(--ink); font:inherit; outline:none; }
+    input:focus,select:focus { border-color:var(--green); box-shadow:0 0 0 3px #176b4d18; }
+    .check { margin:15px 0; flex-direction:row; align-items:center; font-size:13px; }
+    .check input { width:auto; accent-color:var(--green); }
+    .launch { width:100%; padding:13px; border:0; border-radius:11px; background:var(--green); color:#fff; font-weight:800; cursor:pointer; box-shadow:0 8px 20px #176b4d25; }
+    .launch:hover { filter:brightness(1.06); transform:translateY(-1px); }
+    .notice { margin-top:14px; padding:11px 12px; border-radius:10px; background:#fff1db; color:#7d4b17; font-size:12px; }
+    .workspace { min-width:0; display:flex; flex-direction:column; gap:18px; }
+    .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+    .metric { padding:18px; }
+    .metric span { display:block; color:var(--muted); font-size:12px; font-weight:700; }
+    .metric strong { display:block; font:500 31px/1.2 Georgia,serif; margin-top:7px; }
+    .runs { padding:20px; }
+    .standards { padding:20px; }
+    .target-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:14px; }
+    .target { padding:11px; border-radius:10px; background:#f3f0e7; }
+    .target span { display:block; color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; }
+    .target strong { display:block; margin-top:3px; font-size:15px; }
+    .section-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; }
+    .run { border-top:1px solid var(--line); padding:17px 0; }
+    .run:first-of-type { border-top:0; }
+    .run-head { display:flex; justify-content:space-between; gap:16px; align-items:start; }
+    .run-title { display:flex; gap:10px; align-items:center; }
+    .badge { padding:4px 8px; border-radius:999px; background:#ece9df; color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; }
+    .badge.running { background:#e0ecff; color:var(--blue); }
+    .badge.complete { background:var(--mint); color:var(--green); }
+    .badge.failed { background:#f8dede; color:var(--red); }
+    .stage { color:var(--muted); font-size:12px; margin:5px 0 12px; }
+    .chart { height:150px; width:100%; border-radius:10px; background:#faf8f2; border:1px solid #ece9df; }
+    .legend { display:flex; gap:15px; font-size:11px; color:var(--muted); margin:7px 0; }
+    .legend i { display:inline-block; width:14px; height:3px; vertical-align:middle; margin-right:5px; border-radius:2px; }
+    details { margin-top:10px; }
+    summary { cursor:pointer; color:var(--muted); font-weight:700; font-size:12px; }
+    pre { max-height:240px; overflow:auto; padding:12px; background:#18211d; color:#d7eee3; border-radius:10px; font:11px/1.5 ui-monospace,monospace; white-space:pre-wrap; }
+    .scorecard { margin:14px 0; padding:14px; border:1px solid #e5e1d6; border-radius:12px; background:#fcfaf4; }
+    .score-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .score-head small { color:var(--muted); }
+    .score-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:7px; }
+    .score { min-width:0; padding:10px; border-radius:9px; background:#fff; border:1px solid var(--line); }
+    .score-name { color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; }
+    .score-value { font:500 20px/1.2 Georgia,serif; margin:4px 0; }
+    .ci { min-height:28px; color:var(--muted); font-size:9px; }
+    .status { display:inline-block; padding:3px 6px; border-radius:999px; font-size:9px; font-weight:900; text-transform:uppercase; }
+    .status.pass { background:var(--mint); color:var(--green); }
+    .status.fail { background:#f8dede; color:var(--red); }
+    .status.pending { background:#ece9df; color:var(--muted); }
+    .protocol { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+    .gate { padding:5px 8px; border-radius:7px; background:#ece9df; color:var(--muted); font-size:10px; font-weight:750; }
+    .gate.pass { background:var(--mint); color:var(--green); }
+    .gate.fail { background:#f8dede; color:var(--red); }
+    .empty { padding:40px 0; text-align:center; color:var(--muted); }
+    @media(max-width:1050px){.target-grid,.score-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:900px){ main{grid-template-columns:1fr}.config{position:static}.summary{grid-template-columns:1fr}.pulse{display:none} }
+  </style>
+</head>
+<body>
+  <header>
+    <div><div class="eyebrow">Offline learning workspace</div><h1>Learning Policy Lab</h1><p class="subtitle">Configure CPU experiments, watch accuracy move at every step, and compare Behaviour Cloning with the student-state model.</p></div>
+    <div class="pulse"><i></i> Live local session</div>
+  </header>
+  <main>
+    <aside class="card config">
+      <h2>New experiment</h2>
+      <div class="segmented"><button id="bcTab" class="active">Behaviour Cloning</button><button id="stateTab">State model</button></div>
+      <div class="grid">
+        <label class="wide">Dataset<select id="dataset"><option value="oulad">OULAD</option><option value="ednet">EdNet</option></select></label>
+        <div id="bcFields" style="display:contents">
+          <label>Episodes<input id="episodes" type="number" value="50" min="1"></label>
+          <label>Steps<input id="bcSteps" type="number" value="50" min="1"></label>
+          <label>Batch size<input id="bcBatch" type="number" value="64" min="1"></label>
+          <label>Learning rate<input id="bcLr" type="number" value="0.001" step="0.0001"></label>
+          <label>Accuracy rows<input id="accuracyRows" type="number" value="512" min="1"></label>
+          <label>Gamma<input id="gamma" type="number" value="0.99" step="0.01"></label>
+        </div>
+        <div id="stateFields" style="display:none" class="wide">
+          <div class="grid">
+            <label class="wide">Variant<select id="variant"><option>sequence_only</option><option>full</option><option>graph_only</option><option>sequence_graph</option><option>sequence_mastery</option></select></label>
+            <label>Epochs<input id="epochs" type="number" value="1" min="1"></label>
+            <label>Batch size<input id="stateBatch" type="number" value="2" min="1"></label>
+            <label>Train windows<input id="trainWindows" type="number" value="50" min="1"></label>
+            <label>Validation windows<input id="validationWindows" type="number" value="25" min="1"></label>
+            <label>Learning rate<input id="stateLr" type="number" value="0.0003" step="0.0001"></label>
+            <label>CPU threads<input id="cpuThreads" type="number" value="2" min="1"></label>
+          </div>
+        </div>
+      </div>
+      <label class="check" id="validateLabel"><input id="validate" type="checkbox" checked> Run held-out validation</label>
+      <button class="launch" id="launch">Start CPU experiment</button>
+      <div class="notice">Phase 9 currently uses provisional state vectors. BC results remain developmental until a state-model checkpoint is connected to Phase 8.</div>
+    </aside>
+    <section class="workspace">
+      <div class="summary">
+        <div class="card metric"><span>Current BC validation</span><strong id="currentBc">—</strong></div>
+        <div class="card metric"><span>Current state correctness</span><strong id="currentState">—</strong></div>
+        <div class="card metric"><span>Active experiments</span><strong id="activeRuns">0</strong></div>
+      </div>
+      <div class="card standards">
+        <div class="section-head"><h2>Final acceptance targets</h2><span class="eyebrow">Evidence required</span></div>
+        <div class="target-grid">
+          <div class="target"><span>HR@5</span><strong>≥75%</strong><small>Prefer 80–85%</small></div>
+          <div class="target"><span>NDCG@10</span><strong>≥0.40</strong></div>
+          <div class="target"><span>MRR</span><strong>≥0.30</strong></div>
+          <div class="target"><span>Correctness AUC</span><strong>≥0.79</strong></div>
+          <div class="target"><span>Relative lift</span><strong>≥5%</strong><small>vs all baselines</small></div>
+        </div>
+      </div>
+      <div class="card runs"><div class="section-head"><h2>Experiment runs</h2><span class="eyebrow" id="updated">Waiting</span></div><div id="runList" class="empty">No dashboard experiments yet.</div></div>
+    </section>
+  </main>
+  <script>
+    let model='bc';
+    const $=id=>document.getElementById(id);
+    const number=id=>Number($(id).value);
+    function switchModel(next){ model=next; $('bcTab').classList.toggle('active',next==='bc'); $('stateTab').classList.toggle('active',next==='state'); $('bcFields').style.display=next==='bc'?'contents':'none'; $('stateFields').style.display=next==='state'?'block':'none'; $('validate').disabled=next==='state'; if(next==='state') $('validate').checked=true; $('validateLabel').title=next==='state'?'State-model training always validates after each epoch.':''; }
+    $('bcTab').onclick=()=>switchModel('bc'); $('stateTab').onclick=()=>switchModel('state');
+    $('launch').onclick=async()=>{
+      const parameters=model==='bc'?{episodes:number('episodes'),steps:number('bcSteps'),batch_size:number('bcBatch'),learning_rate:number('bcLr'),accuracy_rows:number('accuracyRows'),gamma:number('gamma'),run_validation:$('validate').checked}:{variant:$('variant').value,epochs:number('epochs'),batch_size:number('stateBatch'),max_train_windows:number('trainWindows'),max_validation_windows:number('validationWindows'),learning_rate:number('stateLr'),cpu_threads:number('cpuThreads'),run_validation:$('validate').checked};
+      $('launch').disabled=true; $('launch').textContent='Queueing…';
+      const response=await fetch('/api/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,dataset:$('dataset').value,parameters})});
+      const data=await response.json(); if(!response.ok) alert(data.error||'Could not start run'); $('launch').disabled=false; $('launch').textContent='Start CPU experiment'; refresh();
+    };
+    function pct(value){ return value==null?'—':(100*value).toFixed(2)+'%'; }
+    function decimal(value){ return value==null?'—':Number(value).toFixed(3); }
+    function criterion(name,value,target,format='decimal',ciLow=null,ciHigh=null,note=''){
+      const state=value==null?'pending':value>=target?'pass':'fail'; const shown=format==='pct'?pct(value):decimal(value); const targetShown=format==='pct'?pct(target):decimal(target); const ci=ciLow==null?'No confidence interval':`95% CI ${format==='pct'?pct(ciLow)+'–'+pct(ciHigh):decimal(ciLow)+'–'+decimal(ciHigh)}`;
+      return `<div class="score"><div class="score-name">${name}</div><div class="score-value">${shown}</div><div class="ci">${ci}${note?`<br>${note}`:''}</div><span class="status ${state}">${state==='pass'?'Target met':state==='fail'?'Below '+targetShown:'Not evaluated'}</span></div>`;
+    }
+    function gate(label,state){const kind=state===true?'pass':state===false?'fail':'pending';const icon=state===true?'✓':state===false?'✕':'•';return `<span class="gate ${kind}">${icon} ${label}</span>`;}
+    function scorecard(metric,model){
+      const baselines=metric.baselines_compared||[]; const baselinePass=['bc','popularity','transformer_only','graph_only'].every(x=>baselines.includes(x)) && metric.relative_improvement>=.05;
+      return `<section class="scorecard"><div class="score-head"><h3>Evaluation scorecard</h3><small>${metric.evaluation_split?metric.evaluation_split+' split · ':''}${metric.evaluated_transitions??'—'} transitions · ${metric.evaluated_episodes??'—'} episodes</small></div><div class="score-grid">${criterion('HR@5',metric.validation_hit_rate_5,.75,'pct',metric.validation_hit_rate_5_ci95_low,metric.validation_hit_rate_5_ci95_high,'Preferred 80–85%')}${criterion('NDCG@10',metric.validation_ndcg_10,.40,'decimal',metric.validation_ndcg_10_ci95_low,metric.validation_ndcg_10_ci95_high)}${criterion('MRR',metric.validation_mrr,.30,'decimal',metric.validation_mrr_ci95_low,metric.validation_mrr_ci95_high)}${criterion('Correctness AUC',metric.validation_correctness_auc,.79)}${criterion('Relative lift',metric.relative_improvement,.05,'pct',null,null,'vs BC, popularity, Transformer-only, graph-only')}</div><div class="protocol">${gate('Full held-out temporal test',metric.full_held_out_temporal_test===true)}${gate('Multiple seeds',metric.seed_count>=3)}${gate('No provisional states',metric.provisional_states===false)}${gate('Leakage audit passed',metric.leakage_check_passed)}${gate('All baselines + ≥5% lift',baselinePass?true:(metric.relative_improvement==null?null:false))}</div></section>`;
+    }
+    function chart(metrics,model){
+      const points=metrics.filter(m=>m.step!=null); if(!points.length)return '<div class="stage">Metrics will appear when training starts.</div>';
+      const a=points.map(m=>model==='bc'?m.train_accuracy:m.train_correctness_accuracy).filter(v=>v!=null), b=points.map(m=>model==='bc'?m.validation_accuracy:m.validation_correctness_accuracy).filter(v=>v!=null); const all=[...a,...b];
+      const line=(vals,color)=>{if(!vals.length)return '';return `<polyline fill="none" stroke="${color}" stroke-width="3" points="${vals.map((v,i)=>`${10+i*580/Math.max(vals.length-1,1)},${135-v*120}`).join(' ')}"/>`;};
+      return `<svg class="chart" viewBox="0 0 600 150" preserveAspectRatio="none"><line x1="10" y1="135" x2="590" y2="135" stroke="#d8d5ca"/>${line(a,'#176b4d')}${line(b,'#ed8b38')}</svg><div class="legend"><span><i style="background:#176b4d"></i>Training accuracy</span><span><i style="background:#ed8b38"></i>Validation accuracy</span></div>`;
+    }
+    function render(runs){ $('activeRuns').textContent=runs.filter(r=>r.status==='running'||r.status==='queued').length; if(!runs.length){$('runList').className='empty';$('runList').textContent='No dashboard experiments yet.';return;} $('runList').className=''; $('runList').innerHTML=runs.map(r=>{const latest=r.metrics.at(-1)||{}; const accuracy=r.model==='bc'?(latest.validation_accuracy??latest.train_accuracy):(latest.validation_correctness_accuracy??latest.train_correctness_accuracy); return `<article class="run"><div class="run-head"><div><div class="run-title"><h3>${r.model==='bc'?'Behaviour Cloning':'State model'} · ${r.dataset.toUpperCase()}</h3><span class="badge ${r.status}">${r.status}</span></div><div class="stage">${r.stage} · ${r.metrics.length} metric events · latest accuracy ${pct(accuracy)}</div></div><span class="eyebrow">${r.id}</span></div>${chart(r.metrics,r.model)}${scorecard(latest,r.model)}${r.error?`<div class="notice">${r.error}</div>`:''}<details><summary>Live output</summary><pre>${r.logs.join('\n').replaceAll('&','&amp;').replaceAll('<','&lt;')}</pre></details></article>`;}).join(''); }
+    async function refresh(){ try{const [runs,status]=await Promise.all([fetch('/api/runs').then(r=>r.json()),fetch('/api/status').then(r=>r.json())]); render(runs); $('currentBc').textContent=status.bc?pct(status.bc.validation_accuracy):'—'; const states=status.state||[]; $('currentState').textContent=states.length?pct(states.at(-1).correctness_accuracy):'Not trained'; $('updated').textContent='Updated '+new Date().toLocaleTimeString();}catch(e){$('updated').textContent='Disconnected';} }
+    refresh(); setInterval(refresh,1000);
+  </script>
+</body>
+</html>

@@ -6,7 +6,7 @@ import random
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import numpy as np
 import pandas as pd
@@ -403,8 +403,13 @@ class AtomicCheckpointManager:
 
 
 class Phase7PretrainingPipeline:
-    def __init__(self, config: dict[str, object]):
+    def __init__(
+        self,
+        config: dict[str, object],
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
+    ):
         self.config = config
+        self.progress_callback = progress_callback
         self.device = torch.device("cuda" if torch.cuda.is_available() and config.get("use_cuda", True) else "cpu")
 
     @classmethod
@@ -513,6 +518,29 @@ class Phase7PretrainingPipeline:
                 model, graph, loss_function, optimizer, scheduler, dataset, epoch, global_step
             )
             validation_result = self._validate(model, graph, loss_function, dataset)
+            if self.progress_callback is not None:
+                self.progress_callback(
+                    {
+                        "model": "state",
+                        "dataset": dataset,
+                        "variant": variant,
+                        "epoch": epoch + 1,
+                        "step": global_step,
+                        "split": "validation",
+                        "validation_total_loss": validation_result["losses"]["total"],
+                        "validation_correctness_accuracy": validation_result["correctness"]["accuracy"],
+                        "validation_correctness_auc": validation_result["correctness"]["auc"],
+                        "validation_action_accuracy": validation_result["action_accuracy"],
+                        "validation_mrr": validation_result["candidate_ranking"]["mrr"],
+                        "validation_hit_rate_5": validation_result["candidate_ranking"].get("hit_rate@5"),
+                        "validation_ndcg_10": validation_result["candidate_ranking"].get("ndcg@10"),
+                        "evaluation_split": "validation",
+                        "seed_count": 1,
+                        "full_held_out_temporal_test": False,
+                        "leakage_check_passed": None,
+                        "provisional_states": False,
+                    }
+                )
             selection_value = float(validation_result["losses"]["total"])
             improved, should_stop = stopper.update(selection_value)
             record = {
@@ -561,6 +589,7 @@ class Phase7PretrainingPipeline:
         model.train()
         totals = {name: 0.0 for name in ("total", "item", "action", "correctness", "mastery")}
         targets = 0
+        correctness_correct = correctness_count = action_correct = 0
         for cpu_batch in self._stream(dataset, "train", epoch, True):
             batch = {name: value.to(self.device) for name, value in cpu_batch.items()}
             optimizer.zero_grad(set_to_none=True)
@@ -576,7 +605,36 @@ class Phase7PretrainingPipeline:
             targets += count
             for name, value in losses.items():
                 totals[name] += float(value.detach().cpu()) * count
+            mask = batch["target_mask"].bool()
+            correctness_targets = batch["target_correctness"].float()
+            correctness_mask = mask & correctness_targets.ge(0)
+            if torch.any(correctness_mask):
+                correctness_predictions = outputs["correctness_logits"][correctness_mask].ge(0)
+                correctness_correct += int(
+                    (correctness_predictions == correctness_targets[correctness_mask].bool()).sum()
+                )
+                correctness_count += int(correctness_mask.sum())
+            action_correct += int(
+                (
+                    outputs["action_logits"].argmax(-1)[mask]
+                    == batch["target_action_tokens"].long()[mask]
+                ).sum()
+            )
             global_step += 1
+            if self.progress_callback is not None:
+                self.progress_callback(
+                    {
+                        "model": "state",
+                        "dataset": dataset,
+                        "variant": model.config.variant,
+                        "epoch": epoch + 1,
+                        "step": global_step,
+                        "train_total_loss": totals["total"] / max(targets, 1),
+                        "train_correctness_accuracy": correctness_correct / max(correctness_count, 1),
+                        "train_action_accuracy": action_correct / max(targets, 1),
+                        "learning_rate": scheduler.get_last_lr()[0],
+                    }
+                )
         return {"target_count": targets, "losses": {name: value / max(targets, 1) for name, value in totals.items()}}, global_step
 
     def _validate(self, model, graph, loss_function, dataset):

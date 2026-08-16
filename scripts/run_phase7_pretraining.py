@@ -16,7 +16,12 @@ def main() -> None:
         help="Actually run optimization. Without this flag, only validate the configuration and inputs.",
     )
     args = parser.parse_args()
+    def print_progress(metric: dict[str, object]) -> None:
+        print(f"METRIC_JSON:{json.dumps(metric)}", flush=True)
+
     pipeline = Phase7PretrainingPipeline.from_json(args.config)
+    if args.execute:
+        pipeline.progress_callback = print_progress
     result = pipeline.run() if args.execute else pipeline.validate_only()
     print(json.dumps(result, indent=2))
 
