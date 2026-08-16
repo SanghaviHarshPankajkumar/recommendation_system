@@ -30,6 +30,14 @@
     .check input { width:auto; accent-color:var(--green); }
     .launch { width:100%; padding:13px; border:0; border-radius:11px; background:var(--green); color:#fff; font-weight:800; cursor:pointer; box-shadow:0 8px 20px #176b4d25; }
     .launch:hover { filter:brightness(1.06); transform:translateY(-1px); }
+    .run-nav { display:flex; justify-content:space-between; align-items:center; gap:10px; margin:12px 0 4px; padding:9px 10px; border-radius:9px; background:#edf5f0; color:var(--green); font-size:11px; font-weight:800; }
+    .run-nav button { border:0; background:var(--green); color:#fff; padding:6px 9px; border-radius:7px; cursor:pointer; font-weight:800; }
+    label small { font-weight:500; color:#89928e; }
+    details.advanced { grid-column:1/-1; border:1px solid var(--line); border-radius:10px; padding:10px; background:#faf8f2; }
+    details.advanced summary { color:var(--ink); font-size:12px; }
+    details.advanced .grid { margin-top:12px; }
+    .eta { margin:14px 0; padding:12px; border-radius:10px; background:#e9f0fb; color:#294c82; font-size:12px; }
+    .eta strong { display:block; font-size:14px; margin-bottom:3px; }
     .notice { margin-top:14px; padding:11px 12px; border-radius:10px; background:#fff1db; color:#7d4b17; font-size:12px; }
     .workspace { min-width:0; display:flex; flex-direction:column; gap:18px; }
     .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
@@ -52,6 +60,9 @@
     .badge.complete { background:var(--mint); color:var(--green); }
     .badge.failed { background:#f8dede; color:var(--red); }
     .stage { color:var(--muted); font-size:12px; margin:5px 0 12px; }
+    .progress-track { height:8px; border-radius:999px; background:#e5e2d9; overflow:hidden; margin:8px 0 4px; }
+    .progress-fill { height:100%; min-width:2px; border-radius:inherit; background:linear-gradient(90deg,var(--green),#38a879); }
+    .progress-copy { color:var(--muted); font-size:10px; }
     .chart { height:150px; width:100%; border-radius:10px; background:#faf8f2; border:1px solid #ece9df; }
     .legend { display:flex; gap:15px; font-size:11px; color:var(--muted); margin:7px 0; }
     .legend i { display:inline-block; width:14px; height:3px; vertical-align:middle; margin-right:5px; border-radius:2px; }
@@ -87,31 +98,77 @@
   <main>
     <aside class="card config">
       <h2>New experiment</h2>
+      <div class="run-nav"><span id="runSummary">0 running · 2 completed</span><button id="viewRuns">View live runs ↓</button></div>
       <div class="segmented"><button id="bcTab" class="active">Behaviour Cloning</button><button id="stateTab">State model</button></div>
       <div class="grid">
         <label class="wide">Dataset<select id="dataset"><option value="oulad">OULAD</option><option value="ednet">EdNet</option></select></label>
         <div id="bcFields" style="display:contents">
-          <label>Episodes<input id="episodes" type="number" value="50" min="1"></label>
-          <label>Steps<input id="bcSteps" type="number" value="50" min="1"></label>
+          <label class="wide">Data scope<select id="bcScope"><option value="bounded">Bounded episode run</option><option value="full">Full available training data</option></select><small>Full uses every available episode.</small></label>
+          <label id="episodesLabel">Episode limit<input id="episodes" type="number" value="50" min="1"><small>Maximum learner episodes prepared.</small></label>
+          <label>Schedule<select id="bcSchedule"><option value="steps">Optimizer steps</option><option value="epochs">Dataset epochs</option></select><small>Epochs derive steps after preparation.</small></label>
+          <label id="stepsLabel">Optimizer steps<input id="bcSteps" type="number" value="50" min="1"></label>
+          <label id="bcEpochsLabel" style="display:none">Dataset epochs<input id="bcEpochs" type="number" value="5" min="1"></label>
           <label>Batch size<input id="bcBatch" type="number" value="64" min="1"></label>
           <label>Learning rate<input id="bcLr" type="number" value="0.001" step="0.0001"></label>
-          <label>Accuracy rows<input id="accuracyRows" type="number" value="512" min="1"></label>
-          <label>Gamma<input id="gamma" type="number" value="0.99" step="0.01"></label>
+          <label>Live metric rows<input id="accuracyRows" type="number" value="512" min="1"><small>Rows scored at each report.</small></label>
+          <label>Metric interval<input id="metricInterval" type="number" value="1" min="1"><small>Use 100+ for full training.</small></label>
+          <details class="advanced"><summary>Advanced BC parameters (15)</summary><div class="grid">
+            <label>Gamma<input id="gamma" type="number" value="0.99" step="0.01"></label>
+            <label>BC regularization β<input id="beta" type="number" value="0.5" step="0.1"></label>
+            <label>CPU threads<input id="bcThreads" type="number" value="4" min="1"></label>
+            <label>Random seed<input id="bcSeed" type="number" value="42" min="0"></label>
+            <label>Bootstrap replicates<input id="bootstrap" type="number" value="100" min="0"></label>
+            <label>Final evaluation rows<input id="evaluationRows" type="number" value="512" min="0"><small>0 means the complete split.</small></label>
+            <label>Evaluation split<select id="evaluationSplit"><option value="validation">Validation</option><option value="test">Temporal test</option></select></label>
+            <label>State dimension<input id="bcStateDim" type="number" value="64" min="1"></label>
+            <label>History length<input id="maxHistory" type="number" value="127" min="1"></label>
+            <label>Episode step cap<input id="maxEpisodeSteps" type="number" value="128" min="1"></label>
+            <label>Minimum support<input id="minSupport" type="number" value="5" min="1"></label>
+            <label>Mastery threshold<input id="masteryThreshold" type="number" value="0.7" step="0.05"></label>
+            <label>Reward clip<input id="rewardClip" type="number" value="1.0" step="0.1"></label>
+            <label class="check"><input id="prerequisites" type="checkbox"> Enforce prerequisites</label>
+            <label class="check"><input id="avoidRepeat" type="checkbox"> Avoid immediate repeat</label>
+          </div></details>
         </div>
         <div id="stateFields" style="display:none" class="wide">
           <div class="grid">
             <label class="wide">Variant<select id="variant"><option>sequence_only</option><option>full</option><option>graph_only</option><option>sequence_graph</option><option>sequence_mastery</option></select></label>
+            <label class="wide">Data scope<select id="stateScope"><option value="bounded">Bounded window run</option><option value="full">Full available train + validation windows</option></select></label>
             <label>Epochs<input id="epochs" type="number" value="1" min="1"></label>
             <label>Batch size<input id="stateBatch" type="number" value="2" min="1"></label>
-            <label>Train windows<input id="trainWindows" type="number" value="50" min="1"></label>
-            <label>Validation windows<input id="validationWindows" type="number" value="25" min="1"></label>
+            <label id="trainWindowsLabel">Train windows<input id="trainWindows" type="number" value="50" min="1"></label>
+            <label id="validationWindowsLabel">Validation windows<input id="validationWindows" type="number" value="25" min="1"></label>
             <label>Learning rate<input id="stateLr" type="number" value="0.0003" step="0.0001"></label>
             <label>CPU threads<input id="cpuThreads" type="number" value="2" min="1"></label>
+            <details class="advanced"><summary>Advanced state-model parameters (20)</summary><div class="grid">
+              <label>Random seed<input id="stateSeed" type="number" value="42" min="0"></label>
+              <label>Weight decay<input id="weightDecay" type="number" value="0.0001" step="0.0001"></label>
+              <label>Warmup steps<input id="warmupSteps" type="number" value="2" min="0"></label>
+              <label>Minimum LR ratio<input id="minLrRatio" type="number" value="0.1" step="0.05"></label>
+              <label>Gradient clip<input id="gradientClip" type="number" value="1.0" step="0.1"></label>
+              <label>Early-stop patience<input id="patience" type="number" value="2" min="1"></label>
+              <label>Early-stop delta<input id="earlyDelta" type="number" value="0.0001" step="0.0001"></label>
+              <label>Window length<input id="windowLength" type="number" value="128" min="2"></label>
+              <label>Ranking examples<input id="rankingExamples" type="number" value="1000" min="1"></label>
+              <label>State dimension<input id="stateDim" type="number" value="64" min="1"></label>
+              <label>Attention heads<input id="numHeads" type="number" value="4" min="1"></label>
+              <label>Transformer layers<input id="transformerLayers" type="number" value="2" min="1"></label>
+              <label>Graph layers<input id="graphLayers" type="number" value="2" min="1"></label>
+              <label>Feedforward dimension<input id="feedforwardDim" type="number" value="128" min="1"></label>
+              <label>Sequence length<input id="maxSequenceLength" type="number" value="127" min="1"></label>
+              <label>Dropout<input id="dropout" type="number" value="0.1" step="0.05"></label>
+              <label>Item loss weight<input id="itemWeight" type="number" value="1.0" step="0.1"></label>
+              <label>Action loss weight<input id="actionWeight" type="number" value="0.25" step="0.05"></label>
+              <label>Correctness weight<input id="correctnessWeight" type="number" value="0.5" step="0.1"></label>
+              <label>Mastery weight<input id="masteryWeight" type="number" value="0.5" step="0.1"></label>
+            </div></details>
           </div>
         </div>
       </div>
+      <div class="eta" id="eta"><strong>Estimated CPU time</strong><span>Choose scope and parameters.</span></div>
       <label class="check" id="validateLabel"><input id="validate" type="checkbox" checked> Run held-out validation</label>
       <button class="launch" id="launch">Start CPU experiment</button>
+      <div class="stage">You can click Start again immediately to queue another independent run. Each run gets its own output directory and live result card.</div>
       <div class="notice">Phase 9 currently uses provisional state vectors. BC results remain developmental until a state-model checkpoint is connected to Phase 8.</div>
     </aside>
     <section class="workspace">
@@ -130,20 +187,35 @@
           <div class="target"><span>Relative lift</span><strong>≥5%</strong><small>vs all baselines</small></div>
         </div>
       </div>
-      <div class="card runs"><div class="section-head"><h2>Experiment runs</h2><span class="eyebrow" id="updated">Waiting</span></div><div id="runList" class="empty">No dashboard experiments yet.</div></div>
+      <div class="card runs" id="runs"><div class="section-head"><h2>Current results & multiple runs</h2><span class="eyebrow" id="updated">Waiting</span></div><div id="runList" class="empty">No dashboard experiments yet.</div></div>
     </section>
   </main>
   <script>
     let model='bc';
     const $=id=>document.getElementById(id);
     const number=id=>Number($(id).value);
-    function switchModel(next){ model=next; $('bcTab').classList.toggle('active',next==='bc'); $('stateTab').classList.toggle('active',next==='state'); $('bcFields').style.display=next==='bc'?'contents':'none'; $('stateFields').style.display=next==='state'?'block':'none'; $('validate').disabled=next==='state'; if(next==='state') $('validate').checked=true; $('validateLabel').title=next==='state'?'State-model training always validates after each epoch.':''; }
+    function switchModel(next){ model=next; $('bcTab').classList.toggle('active',next==='bc'); $('stateTab').classList.toggle('active',next==='state'); $('bcFields').style.display=next==='bc'?'contents':'none'; $('stateFields').style.display=next==='state'?'block':'none'; $('validate').disabled=next==='state'; if(next==='state') $('validate').checked=true; $('validateLabel').title=next==='state'?'State-model training always validates after each epoch.':''; updateEstimate(); }
     $('bcTab').onclick=()=>switchModel('bc'); $('stateTab').onclick=()=>switchModel('state');
+    $('viewRuns').onclick=()=>$('runs').scrollIntoView({behavior:'smooth'});
+    function updateVisibility(){const bcFull=$('bcScope').value==='full';$('episodes').disabled=bcFull;$('episodesLabel').style.opacity=bcFull ? .45 : 1;const byEpoch=$('bcSchedule').value==='epochs';$('stepsLabel').style.display=byEpoch?'none':'flex';$('bcEpochsLabel').style.display=byEpoch?'flex':'none';const stateFull=$('stateScope').value==='full';$('trainWindows').disabled=stateFull;$('validationWindows').disabled=stateFull;$('trainWindowsLabel').style.opacity=stateFull ? .45 : 1;$('validationWindowsLabel').style.opacity=stateFull ? .45 : 1;updateEstimate();}
+    function duration(seconds){if(seconds<120)return Math.ceil(seconds)+' seconds';if(seconds<7200)return (seconds/60).toFixed(1)+' minutes';if(seconds<172800)return (seconds/3600).toFixed(1)+' hours';return (seconds/86400).toFixed(1)+' days';}
+    function updateEstimate(){
+      if(model==='bc'){
+        const full=$('bcScope').value==='full', dataset=$('dataset').value, episodes=full?(dataset==='oulad'?32587:297915):number('episodes'), batch=Math.max(number('bcBatch'),1), interval=Math.max(number('metricInterval'),1); let steps=number('bcSteps'); if($('bcSchedule').value==='epochs')steps=Math.ceil(episodes*108/batch)*number('bcEpochs'); const evalRows=number('evaluationRows')||episodes*108; const seconds=episodes*.26+steps*.03+Math.ceil(steps/interval)*.12+evalRows*.027; $('eta').innerHTML=`<strong>Estimated CPU time: ${duration(seconds)}</strong><span>Rough projection from the completed run on this machine. Full evaluation is often the slowest part. Reporting every ${interval} step(s).</span>`;
+      }else{
+        const dataset=$('dataset').value, full=$('stateScope').value==='full', train=full?(dataset==='oulad'?136417:1172909):number('trainWindows'), validation=full?(dataset==='oulad'?42530:452438):number('validationWindows'), batches=Math.ceil(train/Math.max(number('stateBatch'),1))+Math.ceil(validation/Math.max(number('stateBatch'),1)), seconds=batches*number('epochs')*(dataset==='oulad'?3.76:5.1); $('eta').innerHTML=`<strong>Estimated CPU time: ${duration(seconds)} per variant</strong><span>Projection from measured Phase 7 CPU batches. Full state training for both main variants and both datasets at batch 2 / 5 epochs is roughly 500 days.</span>`;
+      }
+    }
+    ['dataset','bcScope','bcSchedule','episodes','bcSteps','bcEpochs','bcBatch','metricInterval','evaluationRows','stateScope','epochs','stateBatch','trainWindows','validationWindows'].forEach(id=>$(id).addEventListener('input',updateVisibility));
     $('launch').onclick=async()=>{
-      const parameters=model==='bc'?{episodes:number('episodes'),steps:number('bcSteps'),batch_size:number('bcBatch'),learning_rate:number('bcLr'),accuracy_rows:number('accuracyRows'),gamma:number('gamma'),run_validation:$('validate').checked}:{variant:$('variant').value,epochs:number('epochs'),batch_size:number('stateBatch'),max_train_windows:number('trainWindows'),max_validation_windows:number('validationWindows'),learning_rate:number('stateLr'),cpu_threads:number('cpuThreads'),run_validation:$('validate').checked};
+      const parameters=model==='bc'?{
+        data_scope:$('bcScope').value,schedule:$('bcSchedule').value,episodes:number('episodes'),steps:number('bcSteps'),epochs:number('bcEpochs'),batch_size:number('bcBatch'),learning_rate:number('bcLr'),accuracy_rows:number('accuracyRows'),metric_interval:number('metricInterval'),gamma:number('gamma'),beta:number('beta'),cpu_threads:number('bcThreads'),seed:number('bcSeed'),bootstrap_replicates:number('bootstrap'),evaluation_rows:number('evaluationRows'),evaluation_split:$('evaluationSplit').value,state_dim:number('bcStateDim'),max_history:number('maxHistory'),max_episode_steps:number('maxEpisodeSteps'),min_train_support:number('minSupport'),mastery_threshold:number('masteryThreshold'),reward_clip:number('rewardClip'),enforce_prerequisites:$('prerequisites').checked,avoid_immediate_repeat:$('avoidRepeat').checked,run_validation:$('validate').checked
+      }:{
+        variant:$('variant').value,data_scope:$('stateScope').value,epochs:number('epochs'),batch_size:number('stateBatch'),max_train_windows:number('trainWindows'),max_validation_windows:number('validationWindows'),learning_rate:number('stateLr'),cpu_threads:number('cpuThreads'),seed:number('stateSeed'),weight_decay:number('weightDecay'),warmup_steps:number('warmupSteps'),minimum_lr_ratio:number('minLrRatio'),gradient_clip_norm:number('gradientClip'),early_stopping_patience:number('patience'),early_stopping_min_delta:number('earlyDelta'),window_length:number('windowLength'),max_ranking_examples:number('rankingExamples'),state_dim:number('stateDim'),num_heads:number('numHeads'),transformer_layers:number('transformerLayers'),graph_layers:number('graphLayers'),feedforward_dim:number('feedforwardDim'),max_sequence_length:number('maxSequenceLength'),dropout:number('dropout'),item_weight:number('itemWeight'),action_weight:number('actionWeight'),correctness_weight:number('correctnessWeight'),mastery_weight:number('masteryWeight'),run_validation:true
+      };
       $('launch').disabled=true; $('launch').textContent='Queueing…';
       const response=await fetch('/api/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,dataset:$('dataset').value,parameters})});
-      const data=await response.json(); if(!response.ok) alert(data.error||'Could not start run'); $('launch').disabled=false; $('launch').textContent='Start CPU experiment'; refresh();
+      const data=await response.json(); if(!response.ok) alert(data.error||'Could not start run'); $('launch').disabled=false; $('launch').textContent='Start CPU experiment'; await refresh(); if(response.ok)$('runs').scrollIntoView({behavior:'smooth'});
     };
     function pct(value){ return value==null?'—':(100*value).toFixed(2)+'%'; }
     function decimal(value){ return value==null?'—':Number(value).toFixed(3); }
@@ -156,15 +228,16 @@
       const baselines=metric.baselines_compared||[]; const baselinePass=['bc','popularity','transformer_only','graph_only'].every(x=>baselines.includes(x)) && metric.relative_improvement>=.05;
       return `<section class="scorecard"><div class="score-head"><h3>Evaluation scorecard</h3><small>${metric.evaluation_split?metric.evaluation_split+' split · ':''}${metric.evaluated_transitions??'—'} transitions · ${metric.evaluated_episodes??'—'} episodes</small></div><div class="score-grid">${criterion('HR@5',metric.validation_hit_rate_5,.75,'pct',metric.validation_hit_rate_5_ci95_low,metric.validation_hit_rate_5_ci95_high,'Preferred 80–85%')}${criterion('NDCG@10',metric.validation_ndcg_10,.40,'decimal',metric.validation_ndcg_10_ci95_low,metric.validation_ndcg_10_ci95_high)}${criterion('MRR',metric.validation_mrr,.30,'decimal',metric.validation_mrr_ci95_low,metric.validation_mrr_ci95_high)}${criterion('Correctness AUC',metric.validation_correctness_auc,.79)}${criterion('Relative lift',metric.relative_improvement,.05,'pct',null,null,'vs BC, popularity, Transformer-only, graph-only')}</div><div class="protocol">${gate('Full held-out temporal test',metric.full_held_out_temporal_test===true)}${gate('Multiple seeds',metric.seed_count>=3)}${gate('No provisional states',metric.provisional_states===false)}${gate('Leakage audit passed',metric.leakage_check_passed)}${gate('All baselines + ≥5% lift',baselinePass?true:(metric.relative_improvement==null?null:false))}</div></section>`;
     }
+    function progress(r,latest){let total=null;if(r.model==='state'){const full=r.parameters.data_scope==='full',train=full?(r.dataset==='oulad'?136417:1172909):Number(r.parameters.max_train_windows||0),batch=Number(r.parameters.batch_size||1),epochs=Number(r.parameters.epochs||1);total=Math.ceil(train/batch)*epochs;}else{total=Number(r.parameters.n_steps||r.parameters.steps||0);}if(!total||latest.step==null)return '';const value=Math.min(100,100*Number(latest.step)/total);return `<div class="progress-track"><div class="progress-fill" style="width:${value}%"></div></div><div class="progress-copy">Step ${Number(latest.step).toLocaleString()} / ${total.toLocaleString()} · ${value.toFixed(3)}% of optimizer updates</div>`;}
     function chart(metrics,model){
       const points=metrics.filter(m=>m.step!=null); if(!points.length)return '<div class="stage">Metrics will appear when training starts.</div>';
       const a=points.map(m=>model==='bc'?m.train_accuracy:m.train_correctness_accuracy).filter(v=>v!=null), b=points.map(m=>model==='bc'?m.validation_accuracy:m.validation_correctness_accuracy).filter(v=>v!=null); const all=[...a,...b];
       const line=(vals,color)=>{if(!vals.length)return '';return `<polyline fill="none" stroke="${color}" stroke-width="3" points="${vals.map((v,i)=>`${10+i*580/Math.max(vals.length-1,1)},${135-v*120}`).join(' ')}"/>`;};
       return `<svg class="chart" viewBox="0 0 600 150" preserveAspectRatio="none"><line x1="10" y1="135" x2="590" y2="135" stroke="#d8d5ca"/>${line(a,'#176b4d')}${line(b,'#ed8b38')}</svg><div class="legend"><span><i style="background:#176b4d"></i>Training accuracy</span><span><i style="background:#ed8b38"></i>Validation accuracy</span></div>`;
     }
-    function render(runs){ $('activeRuns').textContent=runs.filter(r=>r.status==='running'||r.status==='queued').length; if(!runs.length){$('runList').className='empty';$('runList').textContent='No dashboard experiments yet.';return;} $('runList').className=''; $('runList').innerHTML=runs.map(r=>{const latest=r.metrics.at(-1)||{}; const accuracy=r.model==='bc'?(latest.validation_accuracy??latest.train_accuracy):(latest.validation_correctness_accuracy??latest.train_correctness_accuracy); return `<article class="run"><div class="run-head"><div><div class="run-title"><h3>${r.model==='bc'?'Behaviour Cloning':'State model'} · ${r.dataset.toUpperCase()}</h3><span class="badge ${r.status}">${r.status}</span></div><div class="stage">${r.stage} · ${r.metrics.length} metric events · latest accuracy ${pct(accuracy)}</div></div><span class="eyebrow">${r.id}</span></div>${chart(r.metrics,r.model)}${scorecard(latest,r.model)}${r.error?`<div class="notice">${r.error}</div>`:''}<details><summary>Live output</summary><pre>${r.logs.join('\n').replaceAll('&','&amp;').replaceAll('<','&lt;')}</pre></details></article>`;}).join(''); }
+    function render(runs){ const active=runs.filter(r=>r.status==='running'||r.status==='queued').length, complete=runs.filter(r=>r.status==='complete').length; $('activeRuns').textContent=active; $('runSummary').textContent=`${active} running · ${complete} completed`; if(!runs.length){$('runList').className='empty';$('runList').textContent='No dashboard experiments yet.';return;} $('runList').className=''; $('runList').innerHTML=runs.map(r=>{const latest=r.metrics.at(-1)||{}; const accuracy=r.model==='bc'?(latest.validation_accuracy??latest.train_accuracy):(latest.validation_correctness_accuracy??latest.train_correctness_accuracy); return `<article class="run"><div class="run-head"><div><div class="run-title"><h3>${r.model==='bc'?'Behaviour Cloning':'State model'} · ${r.dataset.toUpperCase()}</h3><span class="badge ${r.status}">${r.status}</span></div><div class="stage">${r.stage} · ${r.metrics.length} metric events · latest accuracy ${pct(accuracy)}</div>${progress(r,latest)}</div><span class="eyebrow">${r.id}</span></div>${chart(r.metrics,r.model)}${scorecard(latest,r.model)}${r.error?`<div class="notice">${r.error}</div>`:''}<details><summary>Live output</summary><pre>${r.logs.join('\n').replaceAll('&','&amp;').replaceAll('<','&lt;')}</pre></details></article>`;}).join(''); }
     async function refresh(){ try{const [runs,status]=await Promise.all([fetch('/api/runs').then(r=>r.json()),fetch('/api/status').then(r=>r.json())]); render(runs); $('currentBc').textContent=status.bc?pct(status.bc.validation_accuracy):'—'; const states=status.state||[]; $('currentState').textContent=states.length?pct(states.at(-1).correctness_accuracy):'Not trained'; $('updated').textContent='Updated '+new Date().toLocaleTimeString();}catch(e){$('updated').textContent='Disconnected';} }
-    refresh(); setInterval(refresh,1000);
+    updateVisibility(); refresh(); setInterval(refresh,1000);
   </script>
 </body>
 </html>

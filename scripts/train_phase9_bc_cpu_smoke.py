@@ -65,7 +65,7 @@ def _load_dataset(dataset_root: Path, split: str) -> OfflineEvaluationDataset:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run a small Behaviour Cloning experiment on CPU with per-step accuracy"
+        description="Train Behaviour Cloning on CPU with periodic accuracy reporting"
     )
     parser.add_argument(
         "--config",
@@ -104,12 +104,13 @@ def main() -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.set_num_threads(max(1, min(4, torch.get_num_threads())))
+    torch.set_num_threads(int(settings.get("cpu_threads", max(1, min(4, torch.get_num_threads())))))
     algorithm = create_d3rlpy_algorithm(
         "discrete_bc",
         batch_size=int(settings["batch_size"]),
         learning_rate=float(settings["learning_rate"]),
         gamma=float(settings["gamma"]),
+        bc_beta=float(settings.get("beta", 0.5)),
         device=False,
     )
     native_dataset = train_data_to_mdp_dataset(train_data)
@@ -155,15 +156,20 @@ def main() -> None:
         print(f"METRIC_JSON:{json.dumps({'model': 'bc', **row})}", flush=True)
 
     print(
-        f"Starting CPU-only BC smoke run: dataset={dataset_name}, "
+        f"Starting CPU-only BC training: dataset={dataset_name}, "
         f"train_rows={len(train_data.actions)}, validation_rows={len(validation_data.actions)}, "
         f"optimizer_steps={n_steps}, provisional_states={train_data.provisional_states}",
         flush=True,
     )
     report(0)
 
+    metric_interval = int(settings.get("metric_interval", 1))
+    if metric_interval <= 0:
+        raise ValueError("metric_interval must be positive")
+
     def callback(_algorithm: Any, _epoch: int, total_step: int) -> None:
-        report(int(total_step))
+        if int(total_step) % metric_interval == 0 or int(total_step) == n_steps:
+            report(int(total_step))
 
     algorithm.fit(
         native_dataset,
@@ -177,7 +183,7 @@ def main() -> None:
     )
 
     output_root.mkdir(parents=True, exist_ok=True)
-    checkpoint = output_root / "discrete_bc_cpu_smoke.d3"
+    checkpoint = output_root / "discrete_bc_cpu.d3"
     algorithm.save(str(checkpoint))
     result = {
         "status": "complete",
@@ -193,7 +199,7 @@ def main() -> None:
         "history": history,
     }
     write_json(result, output_root / "training_history.json")
-    print(f"BC CPU smoke run complete: {output_root / 'training_history.json'}", flush=True)
+    print(f"BC CPU training complete: {output_root / 'training_history.json'}", flush=True)
 
 
 def train_data_to_mdp_dataset(dataset: OfflineEvaluationDataset):

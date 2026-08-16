@@ -20,6 +20,10 @@ from urllib.parse import urlparse
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INDEX_PATH = PROJECT_ROOT / "dashboard" / "index.html"
 RUN_ROOT = PROJECT_ROOT / "outputs" / "dashboard_runs"
+FULL_WINDOW_COUNTS = {
+    "oulad": {"train": 136_417, "validation": 42_530},
+    "ednet": {"train": 1_172_909, "validation": 452_438},
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -124,25 +128,46 @@ def _execute(run: ExperimentRun, stage: str, command: list[str]) -> None:
 
 def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
     values = run.parameters
-    episodes = int(_bounded_number(values, "episodes", 50, 1, 5000))
-    steps = int(_bounded_number(values, "steps", 50, 1, 100000))
+    full_data = str(values.get("data_scope", "bounded")) == "full"
+    episodes = 2_147_483_647 if full_data else int(
+        _bounded_number(values, "episodes", 50, 1, 1_000_000)
+    )
     batch_size = int(_bounded_number(values, "batch_size", 64, 1, 4096))
     learning_rate = _bounded_number(values, "learning_rate", 0.001, 1e-7, 1.0)
     accuracy_rows = int(_bounded_number(values, "accuracy_rows", 512, 1, 100000))
+    evaluation_rows = int(_bounded_number(values, "evaluation_rows", 512, 0, 100_000_000))
     seed = int(_bounded_number(values, "seed", 42, 0, 2**31 - 1))
 
     prep_config = _read_json(PROJECT_ROOT / "configs" / "phase9_d3rlpy.json")
     prep_config["dataset"] = run.dataset
     prep_config["development_max_episodes"] = episodes
+    prep_config["evaluation_split"] = str(values.get("evaluation_split", "validation"))
+    environment = prep_config["environment"]
+    for key, default in (
+        ("state_dim", 64), ("max_history", 127), ("min_train_support", 5),
+        ("max_episode_steps", 128),
+    ):
+        environment[key] = int(values.get(key, default))
+    for key, default in (("mastery_threshold", 0.7), ("reward_clip", 1.0)):
+        environment[key] = float(values.get(key, default))
+    environment["enforce_prerequisites"] = bool(values.get("enforce_prerequisites", False))
+    environment["avoid_immediate_repeat"] = bool(values.get("avoid_immediate_repeat", False))
     prep_config["paths"]["sequence_root"] = str(PROJECT_ROOT / "outputs" / "phase5_sequences")
     prep_config["paths"]["output_root"] = str(run_dir / "phase9_data")
     prep_path = run_dir / "phase9_prepare.json"
     _write_json(prep_path, prep_config)
     _execute(
         run,
-        "Preparing 50-episode data" if episodes == 50 else f"Preparing {episodes}-episode data",
+        "Preparing all available episodes" if full_data else f"Preparing {episodes}-episode data",
         [sys.executable, "scripts/prepare_phase9_d3rlpy.py", "--config", str(prep_path)],
     )
+
+    preparation = _read_json(run_dir / "phase9_data" / run.dataset / "validation.json")
+    if str(values.get("schedule", "steps")) == "epochs":
+        epochs = int(_bounded_number(values, "epochs", 1, 1, 1000))
+        steps = ((int(preparation["d3rlpy_transitions"]) + batch_size - 1) // batch_size) * epochs
+    else:
+        steps = int(_bounded_number(values, "steps", 50, 1, 100_000_000))
 
     training_config = {
         "paths": {
@@ -155,8 +180,11 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
             "batch_size": batch_size,
             "learning_rate": learning_rate,
             "gamma": float(values.get("gamma", 0.99)),
+            "beta": float(values.get("beta", 0.5)),
             "accuracy_max_transitions": accuracy_rows,
             "accuracy_batch_size": min(accuracy_rows, 512),
+            "metric_interval": int(values.get("metric_interval", 1)),
+            "cpu_threads": int(values.get("cpu_threads", 4)),
             "seed": seed,
         },
     }
@@ -167,13 +195,13 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
         "Training BC on CPU",
         [
             sys.executable,
-            "scripts/train_phase9_bc_cpu_smoke.py",
+            "scripts/train_phase9_bc.py",
             "--config",
             str(training_path),
             "--allow-provisional",
         ],
     )
-    checkpoint = run_dir / "bc_model" / run.dataset / "discrete_bc_cpu_smoke.d3"
+    checkpoint = run_dir / "bc_model" / run.dataset / "discrete_bc_cpu.d3"
     run.checkpoint = str(checkpoint)
 
     if bool(values.get("run_validation", True)):
@@ -186,20 +214,21 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
         evaluation_config["allow_provisional_model_evaluation"] = True
         evaluation_path = run_dir / "bc_evaluation.json"
         _write_json(evaluation_path, evaluation_config)
+        evaluation_command = [
+            sys.executable,
+            "scripts/evaluate_phase9_policy.py",
+            "--config",
+            str(evaluation_path),
+            "--checkpoint",
+            str(checkpoint),
+            "--allow-provisional",
+        ]
+        if evaluation_rows > 0:
+            evaluation_command.extend(["--max-transitions", str(evaluation_rows)])
         _execute(
             run,
             "Validating BC",
-            [
-                sys.executable,
-                "scripts/evaluate_phase9_policy.py",
-                "--config",
-                str(evaluation_path),
-                "--checkpoint",
-                str(checkpoint),
-                "--allow-provisional",
-                "--max-transitions",
-                str(accuracy_rows),
-            ],
+            evaluation_command,
         )
         metrics_path = run_dir / "evaluation" / run.dataset / "discrete_bc" / "metrics.json"
         metrics = _read_json(metrics_path)
@@ -222,10 +251,13 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
                     "validation_hit_rate_10": metrics["metrics"]["hit_rate@10"]["estimate"],
                     "evaluated_transitions": metrics["evaluated_transitions"],
                     "evaluated_episodes": metrics["evaluated_episodes"],
-                    "evaluation_split": "validation",
+                    "evaluation_split": str(values.get("evaluation_split", "validation")),
                     "seed_count": 1,
                     "confidence_interval_method": "episode_cluster_bootstrap_single_seed",
-                    "full_held_out_temporal_test": False,
+                    "full_held_out_temporal_test": bool(
+                        str(values.get("evaluation_split", "validation")) == "test"
+                        and evaluation_rows == 0
+                    ),
                     "provisional_states": metrics["provisional_states"],
                     "leakage_check_passed": None,
                     "relative_improvement": None,
@@ -243,11 +275,16 @@ def _run_state(run: ExperimentRun, run_dir: Path) -> None:
     config["use_cuda"] = False
     config["epochs"] = int(_bounded_number(values, "epochs", 1, 1, 100))
     config["batch_size"] = int(_bounded_number(values, "batch_size", 2, 1, 512))
-    config["max_train_windows"] = int(
-        _bounded_number(values, "max_train_windows", 50, 1, 1000000)
+    full_data = str(values.get("data_scope", "bounded")) == "full"
+    config["max_train_windows"] = (
+        FULL_WINDOW_COUNTS[run.dataset]["train"] if full_data else int(
+            _bounded_number(values, "max_train_windows", 50, 1, 2_000_000)
+        )
     )
-    config["max_validation_windows"] = int(
-        _bounded_number(values, "max_validation_windows", 25, 1, 1000000)
+    config["max_validation_windows"] = (
+        FULL_WINDOW_COUNTS[run.dataset]["validation"] if full_data else int(
+            _bounded_number(values, "max_validation_windows", 25, 1, 1_000_000)
+        )
     )
     config["learning_rate"] = _bounded_number(values, "learning_rate", 0.0003, 1e-7, 1.0)
     config["weight_decay"] = _bounded_number(values, "weight_decay", 0.0001, 0.0, 1.0)
@@ -259,6 +296,23 @@ def _run_state(run: ExperimentRun, run_dir: Path) -> None:
         * config["epochs"],
     )
     config["warmup_steps"] = min(int(values.get("warmup_steps", 2)), total_steps - 1)
+    config["minimum_lr_ratio"] = float(values.get("minimum_lr_ratio", 0.1))
+    config["gradient_clip_norm"] = float(values.get("gradient_clip_norm", 1.0))
+    config["early_stopping_patience"] = int(values.get("early_stopping_patience", 2))
+    config["early_stopping_min_delta"] = float(values.get("early_stopping_min_delta", 0.0001))
+    config["window_length"] = int(values.get("window_length", 128))
+    config["max_ranking_examples"] = int(values.get("max_ranking_examples", 1000))
+    for key in (
+        "state_dim", "num_heads", "transformer_layers", "graph_layers",
+        "feedforward_dim", "max_sequence_length",
+    ):
+        if key in values:
+            config["model"][key] = int(values[key])
+    if "dropout" in values:
+        config["model"]["dropout"] = float(values["dropout"])
+    for key in ("item_weight", "action_weight", "correctness_weight", "mastery_weight"):
+        if key in values:
+            config["loss_weights"][key] = float(values[key])
     config_path = run_dir / "state_training.json"
     _write_json(config_path, config)
     _execute(
@@ -362,7 +416,13 @@ def _restore_completed_runs() -> None:
                     finished_at=history_path.stat().st_mtime,
                     metrics=[{"model": "bc", **metric} for metric in history.get("history", [])],
                     output_dir=str(run_dir),
-                    checkpoint=str(run_dir / "bc_model" / dataset / "discrete_bc_cpu_smoke.d3"),
+                    checkpoint=str(
+                        run_dir / "bc_model" / dataset / (
+                            "discrete_bc_cpu.d3"
+                            if (run_dir / "bc_model" / dataset / "discrete_bc_cpu.d3").exists()
+                            else "discrete_bc_cpu_smoke.d3"
+                        )
+                    ),
                 )
                 evaluation_path = run_dir / "evaluation" / dataset / "discrete_bc" / "metrics.json"
                 if evaluation_path.exists():

@@ -184,6 +184,7 @@ def create_d3rlpy_algorithm(
     gamma: float,
     device: bool | int | str | None = False,
     cql_alpha: float = 1.0,
+    bc_beta: float = 0.5,
 ) -> Any:
     """Construct an untrained d3rlpy algorithm; this function never calls fit."""
 
@@ -192,6 +193,7 @@ def create_d3rlpy_algorithm(
             batch_size=int(batch_size),
             learning_rate=float(learning_rate),
             gamma=float(gamma),
+            beta=float(bc_beta),
         )
     elif algorithm == "discrete_cql":
         config = DiscreteCQLConfig(
