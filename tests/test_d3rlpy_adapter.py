@@ -78,12 +78,20 @@ class D3RLPYAdapterTests(unittest.TestCase):
                 "ednet", [OfflineEpisode("bad", (bad_step,))], action_size=3
             )
 
-    def test_constructs_bc_and_cql_without_training(self) -> None:
+    def test_constructs_bc_and_rejects_unmasked_cql(self) -> None:
         bc = create_d3rlpy_algorithm(
             "discrete_bc", batch_size=4, learning_rate=1e-3, gamma=0.99
         )
+        with self.assertRaisesRegex(ValueError, "dynamic eligibility masks"):
+            create_d3rlpy_algorithm(
+                "discrete_cql", batch_size=4, learning_rate=1e-4, gamma=0.99
+            )
         cql = create_d3rlpy_algorithm(
-            "discrete_cql", batch_size=4, learning_rate=1e-4, gamma=0.99
+            "discrete_cql",
+            batch_size=4,
+            learning_rate=1e-4,
+            gamma=0.99,
+            dynamic_action_masks=False,
         )
         self.assertEqual(type(bc).__name__, "DiscreteBC")
         self.assertEqual(type(cql).__name__, "DiscreteCQL")

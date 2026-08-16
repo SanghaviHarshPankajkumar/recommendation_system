@@ -1,11 +1,17 @@
 {
   "paths": {
     "sequence_root": "outputs/phase5_sequences",
+    "graph_root": "outputs/phase4_graphs",
+    "state_checkpoints": {
+      "ednet": null,
+      "oulad": null
+    },
     "output_root": "outputs/phase9_d3rlpy"
   },
   "dataset": "both",
   "evaluation_split": "validation",
   "development_max_episodes": 4,
+  "state_encode_batch_size": 128,
   "environment": {
     "split": "train",
     "state_dim": 64,
@@ -15,8 +21,21 @@
     "enforce_prerequisites": false,
     "avoid_immediate_repeat": false,
     "max_episode_steps": 128,
+    "preserve_trajectory_continuity": true,
     "ednet_session_gap_hours": 8.0,
-    "reward_clip": 1.0
+    "reward_clip": 1.0,
+    "mastery_progression_scale": 10.0,
+    "reward_weights": {
+      "mastery_progression": 1.0,
+      "learning_opportunity": 0.1,
+      "correctness": 0.05,
+      "score": 0.0,
+      "engagement": 0.05,
+      "time_cost": 0.05,
+      "prerequisite_violation": 0.25,
+      "repetition": 0.1,
+      "dropout": 1.0
+    }
   },
   "algorithms": {
     "discrete_bc": {
@@ -34,6 +53,7 @@
   "training_enabled": false,
   "notes": {
     "iql": "d3rlpy 2.8.1 IQL is continuous-action only; discrete IQL is not configured here.",
-    "action_masks": "Eligibility masks remain sparse external metadata and are enforced during recommendation inference."
+    "action_masks": "Sparse eligibility masks are enforced for BC inference. Stock d3rlpy DiscreteCQL is disabled because it cannot apply them inside training targets and conservative loss.",
+    "cql_replacement": "Required: mask-aware parametric Q(state, item/concept features), not independent discrete item IDs."
   }
 }

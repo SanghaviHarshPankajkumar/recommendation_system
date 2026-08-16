@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -87,8 +88,41 @@ RUNS: dict[str, ExperimentRun] = {}
 RUNS_LOCK = threading.Lock()
 
 
+class RunCancelled(RuntimeError):
+    pass
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+            process.wait(timeout=5)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        result = subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode and process.poll() is None:
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(f"Could not stop process tree {process.pid}: {detail}")
+    else:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
 def _execute(run: ExperimentRun, stage: str, command: list[str]) -> None:
     with run.lock:
+        if run.status in {"cancelling", "cancelled"}:
+            raise RunCancelled(f"Run {run.run_id} was cancelled")
         run.stage = stage
         run.logs.append(f"$ {' '.join(command)}")
     environment = os.environ.copy()
@@ -103,9 +137,13 @@ def _execute(run: ExperimentRun, stage: str, command: list[str]) -> None:
         encoding="utf-8",
         errors="replace",
         env=environment,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
     )
     with run.lock:
         run.process = process
+        cancel_requested = run.status in {"cancelling", "cancelled"}
+    if cancel_requested:
+        _terminate_process_tree(process)
     assert process.stdout is not None
     for raw_line in process.stdout:
         line = raw_line.rstrip()
@@ -122,6 +160,9 @@ def _execute(run: ExperimentRun, stage: str, command: list[str]) -> None:
     with run.lock:
         run.process = None
         run.return_code = return_code
+        cancelled = run.status in {"cancelling", "cancelled"}
+    if cancelled:
+        raise RunCancelled(f"Run {run.run_id} was cancelled")
     if return_code:
         raise RuntimeError(f"{stage} exited with code {return_code}")
 
@@ -142,6 +183,14 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
     prep_config["dataset"] = run.dataset
     prep_config["development_max_episodes"] = episodes
     prep_config["evaluation_split"] = str(values.get("evaluation_split", "validation"))
+    state_checkpoint = str(values.get("state_checkpoint", "")).strip()
+    if state_checkpoint:
+        prep_config["paths"].setdefault("state_checkpoints", {})[run.dataset] = state_checkpoint
+    elif full_data:
+        raise ValueError(
+            "Full BC/RL preparation requires a validation-selected Phase 7 state checkpoint; "
+            "provisional states are not allowed"
+        )
     environment = prep_config["environment"]
     for key, default in (
         ("state_dim", 64), ("max_history", 127), ("min_train_support", 5),
@@ -156,10 +205,18 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
     prep_config["paths"]["output_root"] = str(run_dir / "phase9_data")
     prep_path = run_dir / "phase9_prepare.json"
     _write_json(prep_path, prep_config)
+    preparation_command = [
+        sys.executable,
+        "scripts/prepare_phase9_d3rlpy.py",
+        "--config",
+        str(prep_path),
+    ]
+    if not state_checkpoint:
+        preparation_command.append("--allow-provisional")
     _execute(
         run,
         "Preparing all available episodes" if full_data else f"Preparing {episodes}-episode data",
-        [sys.executable, "scripts/prepare_phase9_d3rlpy.py", "--config", str(prep_path)],
+        preparation_command,
     )
 
     preparation = _read_json(run_dir / "phase9_data" / run.dataset / "validation.json")
@@ -190,16 +247,18 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
     }
     training_path = run_dir / "bc_training.json"
     _write_json(training_path, training_config)
+    training_command = [
+        sys.executable,
+        "scripts/train_phase9_bc.py",
+        "--config",
+        str(training_path),
+    ]
+    if not state_checkpoint:
+        training_command.append("--allow-provisional")
     _execute(
         run,
         "Training BC on CPU",
-        [
-            sys.executable,
-            "scripts/train_phase9_bc.py",
-            "--config",
-            str(training_path),
-            "--allow-provisional",
-        ],
+        training_command,
     )
     checkpoint = run_dir / "bc_model" / run.dataset / "discrete_bc_cpu.d3"
     run.checkpoint = str(checkpoint)
@@ -211,7 +270,7 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
         evaluation_config["paths"]["phase9_root"] = str(run_dir / "phase9_data")
         evaluation_config["paths"]["output_root"] = str(run_dir / "evaluation")
         evaluation_config["bootstrap_replicates"] = int(values.get("bootstrap_replicates", 100))
-        evaluation_config["allow_provisional_model_evaluation"] = True
+        evaluation_config["allow_provisional_model_evaluation"] = not bool(state_checkpoint)
         evaluation_path = run_dir / "bc_evaluation.json"
         _write_json(evaluation_path, evaluation_config)
         evaluation_command = [
@@ -221,8 +280,9 @@ def _run_bc(run: ExperimentRun, run_dir: Path) -> None:
             str(evaluation_path),
             "--checkpoint",
             str(checkpoint),
-            "--allow-provisional",
         ]
+        if not state_checkpoint:
+            evaluation_command.append("--allow-provisional")
         if evaluation_rows > 0:
             evaluation_command.extend(["--max-transitions", str(evaluation_rows)])
         _execute(
@@ -337,6 +397,11 @@ def _worker(run: ExperimentRun) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     run.output_dir = str(run_dir)
     with run.lock:
+        if run.status in {"cancelling", "cancelled"}:
+            run.status = "cancelled"
+            run.stage = "Cancelled"
+            run.finished_at = time.time()
+            return
         run.status = "running"
     try:
         if run.model == "bc":
@@ -348,6 +413,12 @@ def _worker(run: ExperimentRun) -> None:
         with run.lock:
             run.status = "complete"
             run.stage = "Complete"
+    except RunCancelled:
+        with run.lock:
+            run.status = "cancelled"
+            run.stage = "Cancelled"
+            run.error = None
+            run.logs.append("Run cancelled by user")
     except Exception as error:
         with run.lock:
             run.status = "failed"
@@ -554,6 +625,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith("/api/runs/") and path.endswith("/cancel"):
+            run_id = path.split("/")[-2]
+            with RUNS_LOCK:
+                run = RUNS.get(run_id)
+            if run is None:
+                self._json({"error": "Run not found"}, HTTPStatus.NOT_FOUND)
+                return
+            with run.lock:
+                if run.status not in {"queued", "running"}:
+                    self._json(
+                        {"error": f"Run cannot be cancelled from status {run.status}"},
+                        HTTPStatus.CONFLICT,
+                    )
+                    return
+                run.status = "cancelling"
+                run.stage = "Cancelling"
+                run.logs.append("Cancellation requested by user")
+                process = run.process
+            if process is not None:
+                _terminate_process_tree(process)
+            self._json(run.public(), HTTPStatus.ACCEPTED)
+            return
         if path != "/api/runs":
             self._json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
             return

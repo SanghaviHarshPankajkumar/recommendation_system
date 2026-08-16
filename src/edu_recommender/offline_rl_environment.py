@@ -32,8 +32,9 @@ class CounterfactualActionError(OfflineEnvironmentError):
 @dataclass(frozen=True)
 class RewardWeights:
     mastery_progression: float = 1.0
-    correctness: float = 0.25
-    score: float = 0.25
+    learning_opportunity: float = 0.10
+    correctness: float = 0.05
+    score: float = 0.0
     engagement: float = 0.05
     time_cost: float = 0.05
     prerequisite_violation: float = 0.25
@@ -53,8 +54,10 @@ class EnvironmentSettings:
     enforce_prerequisites: bool = False
     avoid_immediate_repeat: bool = False
     max_episode_steps: int = 128
+    preserve_trajectory_continuity: bool = True
     ednet_session_gap_hours: float = 8.0
     reward_clip: float = 1.0
+    mastery_progression_scale: float = 10.0
     reward_weights: RewardWeights = field(default_factory=RewardWeights)
 
     def __post_init__(self) -> None:
@@ -68,6 +71,8 @@ class EnvironmentSettings:
             raise ValueError("mastery_threshold must be in [0, 1]")
         if self.reward_clip <= 0:
             raise ValueError("reward_clip must be positive")
+        if self.mastery_progression_scale <= 0:
+            raise ValueError("mastery_progression_scale must be positive")
 
 
 @dataclass(frozen=True)
@@ -111,6 +116,12 @@ class PackedStateEncoder(Protocol):
         start: int,
         end: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]: ...
+
+    def encode_many(
+        self,
+        arrays: Mapping[str, np.ndarray],
+        ranges: Sequence[tuple[int, int]],
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]: ...
 
 
 def _ordered_vocabulary(path: Path, field: str) -> list[str]:
@@ -227,6 +238,13 @@ class ProvisionalStateEncoder:
         student_state[: min(self.state_dim, feature_bank.size)] = feature_bank[: self.state_dim]
         return student_state, mastery.astype(np.float32), recent
 
+    def encode_many(
+        self,
+        arrays: Mapping[str, np.ndarray],
+        ranges: Sequence[tuple[int, int]],
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        return [self.encode(arrays, start, end) for start, end in ranges]
+
 
 class TorchStudentStateEncoder:
     """CPU-compatible adapter for a Phase 7 student-state checkpoint."""
@@ -241,14 +259,23 @@ class TorchStudentStateEncoder:
         sequence_root: Path,
         max_history: int = 127,
         max_concepts_per_event: int = 9,
+        encode_batch_size: int = 128,
         device: str = "cpu",
     ):
         self.dataset = dataset
         self.device = torch.device(device)
         self.max_history = int(max_history)
         self.max_concepts_per_event = int(max_concepts_per_event)
+        self.encode_batch_size = int(encode_batch_size)
+        if self.encode_batch_size <= 0:
+            raise ValueError("encode_batch_size must be positive")
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
         config = StudentStateModelConfig(**checkpoint["model_config"])
+        if self.max_history > config.max_sequence_length:
+            raise ValueError(
+                f"max_history={self.max_history} exceeds checkpoint maximum "
+                f"sequence length {config.max_sequence_length}"
+            )
         self.state_dim = config.state_dim
         self.mastery_dim = config.concept_vocab_size
         self.graph = GraphTensorBuilder(dataset, Path(graph_root), Path(sequence_root)).build().to(self.device)
@@ -267,40 +294,82 @@ class TorchStudentStateEncoder:
         length = end - start
         if length <= 0:
             raise ValueError("State encoding requires at least one historical event")
-        batch = self._batch(arrays, start, end)
-        with torch.no_grad():
-            outputs = self.model(batch, self.graph)
-        state = outputs["student_states"][0, length - 1].detach().cpu().numpy().astype(np.float32)
-        mastery = outputs["mastery_probabilities"][0, length - 1].detach().cpu().numpy().astype(np.float32)
+        return self.encode_many(arrays, [(start, end)])[0]
+
+    def encode_many(
+        self,
+        arrays: Mapping[str, np.ndarray],
+        ranges: Sequence[tuple[int, int]],
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        normalized = [
+            (max(int(start), int(end) - self.max_history), int(end))
+            for start, end in ranges
+        ]
+        if any(end <= start for start, end in normalized):
+            raise ValueError("State encoding requires at least one historical event")
         provisional = ProvisionalStateEncoder(self.state_dim, self.mastery_dim, self.max_history)
-        _, _, recent = provisional.encode(arrays, start, end)
-        return state, mastery, recent
+        results: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+        for offset in range(0, len(normalized), self.encode_batch_size):
+            chunk = normalized[offset : offset + self.encode_batch_size]
+            batch, lengths = self._batch_many(arrays, chunk)
+            with torch.inference_mode():
+                outputs = self.model(batch, self.graph)
+            states = outputs["student_states"]
+            mastery_probabilities = outputs["mastery_probabilities"]
+            for batch_index, ((start, end), length) in enumerate(zip(chunk, lengths)):
+                state = states[batch_index, length - 1].detach().cpu().numpy().astype(np.float32)
+                mastery = (
+                    mastery_probabilities[batch_index, length - 1]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.float32)
+                )
+                _, _, recent = provisional.encode(arrays, start, end)
+                results.append((state, mastery, recent))
+        return results
 
     def _batch(self, arrays: Mapping[str, np.ndarray], start: int, end: int) -> dict[str, torch.Tensor]:
-        length = end - start
-        full_length = length + 1
+        batch, _ = self._batch_many(arrays, [(start, end)])
+        return batch
+
+    def _batch_many(
+        self,
+        arrays: Mapping[str, np.ndarray],
+        ranges: Sequence[tuple[int, int]],
+    ) -> tuple[dict[str, torch.Tensor], list[int]]:
+        lengths = [end - start for start, end in ranges]
+        max_length = max(lengths)
+        full_length = max_length + 1
         batch: dict[str, torch.Tensor] = {}
         integer_fields = {"item_tokens", "action_tokens", "item_type_tokens", "module_tokens", "source_tokens"}
         for field in (
             "item_tokens", "action_tokens", "item_type_tokens", "module_tokens", "source_tokens",
             "time_gaps", "elapsed_log1p", "engagement_log1p", "scores", "relative_days", "correctness",
         ):
-            values = arrays[field][start:end]
             pad_value = -1 if field == "correctness" else 0
-            padded = np.full(full_length, pad_value, dtype=values.dtype)
-            padded[:length] = values
-            tensor = torch.from_numpy(padded).unsqueeze(0).to(self.device)
+            padded = np.full((len(ranges), full_length), pad_value, dtype=arrays[field].dtype)
+            for row, (start, end) in enumerate(ranges):
+                padded[row, : end - start] = arrays[field][start:end]
+            tensor = torch.from_numpy(padded).to(self.device)
             batch[field] = tensor.long() if field in integer_fields else tensor
-        concepts = np.zeros((length, self.max_concepts_per_event), dtype=np.int64)
-        for local, event_index in enumerate(range(start, end)):
-            concept_start = int(arrays["concept_offsets"][event_index])
-            concept_end = int(arrays["concept_offsets"][event_index + 1])
-            values = arrays["concept_values"][concept_start:concept_end][: self.max_concepts_per_event]
-            concepts[local, : len(values)] = values
-        batch["input_concept_tokens"] = torch.from_numpy(concepts).unsqueeze(0).to(self.device)
-        batch["input_item_tokens"] = batch["item_tokens"][:, :length]
-        batch["input_attention_mask"] = torch.ones((1, length), dtype=torch.bool, device=self.device)
-        return batch
+        concepts = np.zeros(
+            (len(ranges), max_length, self.max_concepts_per_event), dtype=np.int64
+        )
+        attention = np.zeros((len(ranges), max_length), dtype=np.bool_)
+        for row, (start, end) in enumerate(ranges):
+            attention[row, : end - start] = True
+            for local, event_index in enumerate(range(start, end)):
+                concept_start = int(arrays["concept_offsets"][event_index])
+                concept_end = int(arrays["concept_offsets"][event_index + 1])
+                values = arrays["concept_values"][concept_start:concept_end][
+                    : self.max_concepts_per_event
+                ]
+                concepts[row, local, : len(values)] = values
+        batch["input_concept_tokens"] = torch.from_numpy(concepts).to(self.device)
+        batch["input_item_tokens"] = batch["item_tokens"][:, :max_length]
+        batch["input_attention_mask"] = torch.from_numpy(attention).to(self.device)
+        return batch, lengths
 
 
 class ActionCatalog:
@@ -400,8 +469,23 @@ class MasteryOrientedReward:
         concept_end = int(arrays["concept_offsets"][event_index + 1])
         concepts = np.unique(arrays["concept_values"][concept_start:concept_end]).astype(np.int64)
         concepts = concepts[(concepts >= 2) & (concepts < observation.mastery.size)]
-        mastery_delta = (
+        raw_mastery_delta = (
             float(np.mean(next_observation.mastery[concepts] - observation.mastery[concepts]))
+            if concepts.size
+            else 0.0
+        )
+        mastery_delta = float(
+            np.clip(
+                raw_mastery_delta * self.settings.mastery_progression_scale,
+                -1.0,
+                1.0,
+            )
+        )
+        # Peak reward at mastery 0.5 encourages the policy to select material
+        # in the learner's zone of proximal development instead of repeatedly
+        # serving already-mastered easy items.
+        learning_opportunity = (
+            float(np.mean(4.0 * observation.mastery[concepts] * (1.0 - observation.mastery[concepts])))
             if concepts.size
             else 0.0
         )
@@ -417,6 +501,8 @@ class MasteryOrientedReward:
         )
         components = {
             "mastery_progression": mastery_delta,
+            "mastery_progression_raw": raw_mastery_delta,
+            "learning_opportunity": learning_opportunity,
             "correctness": correctness,
             "score": score,
             "engagement": engagement,
@@ -427,6 +513,7 @@ class MasteryOrientedReward:
         }
         reward = (
             weights.mastery_progression * components["mastery_progression"]
+            + weights.learning_opportunity * components["learning_opportunity"]
             + weights.correctness * components["correctness"]
             + weights.score * components["score"]
             + weights.engagement * components["engagement"]
@@ -471,6 +558,14 @@ class PackedEpisodeBuilder:
                 for segment_number, (segment_start, segment_end) in enumerate(
                     self._segments(arrays, student_start, student_end)
                 ):
+                    split_events = [
+                        event
+                        for event in range(segment_start, segment_end)
+                        if int(arrays["split_ids"][event]) == SPLIT_IDS[self.settings.split]
+                    ]
+                    if not split_events:
+                        continue
+                    split_end = split_events[-1] + 1
                     candidate_events = [
                         event
                         for event in range(max(segment_start + 1, student_start + 1), segment_end)
@@ -478,26 +573,72 @@ class PackedEpisodeBuilder:
                         and self._candidate_action(arrays, event) is not None
                         and self._decision_index(arrays, event, segment_start) > segment_start
                     ]
-                    for chunk_number, chunk_start in enumerate(
-                        range(0, len(candidate_events), self.settings.max_episode_steps)
+                    encoding_cache = self._encoding_cache(
+                        arrays, segment_start, candidate_events
+                    )
+                    for chunk_number, (chunk, chunk_truncated) in enumerate(
+                        self._candidate_chunks(candidate_events)
                     ):
-                        chunk = candidate_events[chunk_start : chunk_start + self.settings.max_episode_steps]
-                        if not chunk:
-                            continue
                         episode = self._episode(
                             arrays,
                             str(student_id),
                             segment_start,
-                            segment_end,
+                            split_end,
                             chunk,
                             segment_number,
                             chunk_number,
-                            chunk_start + len(chunk) < len(candidate_events),
+                            chunk_truncated,
+                            encoding_cache,
                         )
                         episodes.append(episode)
                         if max_episodes is not None and len(episodes) >= max_episodes:
                             return episodes
         return episodes
+
+    def _candidate_chunks(
+        self, candidate_events: Sequence[int]
+    ) -> list[tuple[list[int], bool]]:
+        events = list(candidate_events)
+        if not events:
+            return []
+        if self.settings.preserve_trajectory_continuity:
+            return [(events, False)]
+        result: list[tuple[list[int], bool]] = []
+        for start in range(0, len(events), self.settings.max_episode_steps):
+            chunk = events[start : start + self.settings.max_episode_steps]
+            result.append((chunk, start + len(chunk) < len(events)))
+        return result
+
+    def _encoding_cache(
+        self,
+        arrays: Mapping[str, np.ndarray],
+        segment_start: int,
+        candidate_events: Sequence[int],
+    ) -> dict[tuple[int, int], tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        ranges: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        for event_index in candidate_events:
+            decision_index = self._decision_index(arrays, event_index, segment_start)
+            requested = (
+                (
+                    max(segment_start, decision_index - self.settings.max_history),
+                    decision_index,
+                ),
+                (
+                    max(segment_start, event_index + 1 - self.settings.max_history),
+                    event_index + 1,
+                ),
+            )
+            for value in requested:
+                if value not in seen:
+                    seen.add(value)
+                    ranges.append(value)
+        if not ranges:
+            return {}
+        values = self.encoder.encode_many(arrays, ranges)
+        if len(values) != len(ranges):
+            raise ValueError("State encoder returned the wrong number of batched encodings")
+        return dict(zip(ranges, values))
 
     def _segments(
         self,
@@ -564,18 +705,21 @@ class PackedEpisodeBuilder:
         arrays: Mapping[str, np.ndarray],
         student_id: str,
         segment_start: int,
-        segment_end: int,
+        split_end: int,
         candidate_events: Sequence[int],
         segment_number: int,
         chunk_number: int,
         chunk_truncated: bool,
+        encoding_cache: Mapping[
+            tuple[int, int], tuple[np.ndarray, np.ndarray, np.ndarray]
+        ],
     ) -> OfflineEpisode:
         steps: list[OfflineStep] = []
         previous_candidate_item: int | None = None
         withdrawal_token = self.actions.index("withdrawal") if "withdrawal" in self.actions else -1
         dropout = bool(
             withdrawal_token >= 0
-            and np.any(arrays["action_tokens"][candidate_events[-1] + 1 : segment_end] == withdrawal_token)
+            and np.any(arrays["action_tokens"][candidate_events[-1] + 1 : split_end] == withdrawal_token)
         )
         for local_index, event_index in enumerate(candidate_events):
             action = self._candidate_action(arrays, event_index)
@@ -583,9 +727,11 @@ class PackedEpisodeBuilder:
                 raise AssertionError("Candidate event lost its catalog action")
             decision_index = self._decision_index(arrays, event_index, segment_start)
             history_start = max(segment_start, decision_index - self.settings.max_history)
-            state, mastery, recent = self.encoder.encode(arrays, history_start, decision_index)
+            state, mastery, recent = encoding_cache[(history_start, decision_index)]
             next_start = max(segment_start, event_index + 1 - self.settings.max_history)
-            next_state, next_mastery, next_recent = self.encoder.encode(arrays, next_start, event_index + 1)
+            next_state, next_mastery, next_recent = encoding_cache[
+                (next_start, event_index + 1)
+            ]
             module_token = int(arrays["module_tokens"][event_index])
             eligible = self.action_catalog.eligible_actions(
                 module_token,
@@ -651,9 +797,15 @@ class PackedEpisodeBuilder:
 
 
 class BaseOfflineEducationEnv(gym.Env[dict[str, np.ndarray | int], int]):
-    """Strict logged-trajectory replay; it never fabricates counterfactual outcomes."""
+    """Dataset/replay adapter, not an interactive student simulator.
+
+    ``step`` accepts only the logged action. Policy training must consume
+    ``iter_transitions`` (or the converted offline dataset); online Gym rollouts
+    would require a separately validated counterfactual student simulator.
+    """
 
     metadata = {"render_modes": []}
+    offline_replay_only = True
 
     def __init__(
         self,
@@ -738,6 +890,15 @@ class BaseOfflineEducationEnv(gym.Env[dict[str, np.ndarray | int], int]):
             bool(step.truncated),
             info,
         )
+
+    def replay_logged_step(
+        self,
+    ) -> tuple[dict[str, np.ndarray | int], float, bool, bool, dict[str, Any]]:
+        """Advance one observed transition without accepting a policy action."""
+        if self._active_episode is None:
+            raise OfflineEnvironmentError("reset() must be called before replay_logged_step()")
+        logged_action = self._active_episode.steps[self._step_index].logged_action
+        return self.step(logged_action)
 
     def iter_transitions(
         self,

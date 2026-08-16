@@ -15,7 +15,10 @@ from edu_recommender.offline_rl_environment import (
     OULADOfflineEnv,
     PackedEpisodeBuilder,
     ProvisionalStateEncoder,
+    RewardWeights,
+    TorchStudentStateEncoder,
     EnvironmentSettings,
+    MasteryOrientedReward,
 )
 
 
@@ -91,6 +94,14 @@ class OfflineEnvironmentTests(unittest.TestCase):
         with self.assertRaises(CounterfactualActionError):
             environment.step(1)
 
+    def test_logged_replay_has_an_action_free_api(self) -> None:
+        environment = self._environment("ednet")
+        environment.reset(options={"episode_index": 0})
+        _, reward, terminated, truncated, _ = environment.replay_logged_step()
+        self.assertEqual(reward, 0.25)
+        self.assertTrue(terminated)
+        self.assertFalse(truncated)
+
     def test_dataset_specific_environment_rejects_wrong_catalog(self) -> None:
         catalog = ActionCatalog("oulad", candidate_frame("oulad"), ["<PAD>", "<UNK>", "1"])
         with self.assertRaises(ValueError):
@@ -142,6 +153,105 @@ class CandidateAndEncoderTests(unittest.TestCase):
         state_after, mastery_after, _ = encoder.encode(arrays, 0, 2)
         np.testing.assert_array_equal(state_before, state_after)
         np.testing.assert_array_equal(mastery_before, mastery_after)
+
+    def test_state_ranges_are_deduplicated_and_encoded_in_one_batch(self) -> None:
+        class CountingEncoder:
+            state_dim = 64
+            mastery_dim = 3
+            name = "counting"
+
+            def __init__(self) -> None:
+                self.calls = 0
+                self.ranges = []
+
+            def encode_many(self, arrays, ranges):
+                del arrays
+                self.calls += 1
+                self.ranges = list(ranges)
+                return [
+                    (
+                        np.zeros(64, dtype=np.float32),
+                        np.zeros(3, dtype=np.float32),
+                        np.zeros(8, dtype=np.float32),
+                    )
+                    for _ in ranges
+                ]
+
+        builder = PackedEpisodeBuilder.__new__(PackedEpisodeBuilder)
+        builder.settings = EnvironmentSettings(dataset="oulad", max_history=127)
+        builder.encoder = CountingEncoder()
+        cache = builder._encoding_cache({}, 0, [1, 2])
+        self.assertEqual(builder.encoder.calls, 1)
+        self.assertEqual(builder.encoder.ranges, [(0, 1), (0, 2), (0, 3)])
+        self.assertEqual(set(cache), {(0, 1), (0, 2), (0, 3)})
+
+    def test_trajectory_continuity_is_preserved_by_default(self) -> None:
+        builder = PackedEpisodeBuilder.__new__(PackedEpisodeBuilder)
+        builder.settings = EnvironmentSettings(dataset="oulad", max_episode_steps=2)
+        self.assertEqual(builder._candidate_chunks([1, 2, 3]), [([1, 2, 3], False)])
+        builder.settings = EnvironmentSettings(
+            dataset="oulad",
+            max_episode_steps=2,
+            preserve_trajectory_continuity=False,
+        )
+        self.assertEqual(
+            builder._candidate_chunks([1, 2, 3]),
+            [([1, 2], True), ([3], False)],
+        )
+
+    def test_torch_encoder_builds_a_padded_batch(self) -> None:
+        encoder = TorchStudentStateEncoder.__new__(TorchStudentStateEncoder)
+        encoder.max_concepts_per_event = 2
+        encoder.device = __import__("torch").device("cpu")
+        arrays = {
+            name: np.arange(4, dtype=dtype)
+            for name, dtype in {
+                "item_tokens": np.int32,
+                "action_tokens": np.int16,
+                "item_type_tokens": np.int16,
+                "module_tokens": np.int16,
+                "source_tokens": np.int16,
+                "time_gaps": np.float32,
+                "elapsed_log1p": np.float32,
+                "engagement_log1p": np.float32,
+                "scores": np.float32,
+                "relative_days": np.float32,
+                "correctness": np.int8,
+            }.items()
+        }
+        arrays["concept_offsets"] = np.asarray([0, 1, 2, 3, 4], dtype=np.int64)
+        arrays["concept_values"] = np.asarray([2, 3, 2, 3], dtype=np.int32)
+        batch, lengths = encoder._batch_many(arrays, [(0, 2), (1, 4)])
+        self.assertEqual(lengths, [2, 3])
+        self.assertEqual(tuple(batch["input_item_tokens"].shape), (2, 3))
+        self.assertEqual(
+            batch["input_attention_mask"].tolist(),
+            [[True, True, False], [True, True, True]],
+        )
+
+    def test_reward_prefers_learning_opportunity_over_mastered_easy_item(self) -> None:
+        catalog = ActionCatalog("ednet", candidate_frame("ednet"), ["<PAD>", "<UNK>", "1"])
+        settings = EnvironmentSettings(
+            dataset="ednet",
+            reward_weights=RewardWeights(),
+        )
+        reward = MasteryOrientedReward(settings, catalog)
+        arrays = {
+            "concept_offsets": np.asarray([0, 1], dtype=np.int64),
+            "concept_values": np.asarray([2], dtype=np.int32),
+            "correctness": np.asarray([1], dtype=np.int8),
+            "scores": np.asarray([100.0], dtype=np.float32),
+            "engagement_log1p": np.asarray([0.0], dtype=np.float32),
+            "elapsed_log1p": np.asarray([0.0], dtype=np.float32),
+        }
+        medium = observation([0, 1])
+        mastered = observation([0, 1])
+        medium.mastery[2] = 0.5
+        mastered.mastery[2] = 0.99
+        medium_reward, _ = reward.calculate(arrays, 0, medium, medium, 1, False, False)
+        mastered_reward, _ = reward.calculate(arrays, 0, mastered, mastered, 1, False, False)
+        self.assertGreater(medium_reward, mastered_reward)
+        self.assertLessEqual(RewardWeights().correctness + RewardWeights().score, 0.05)
 
 
 if __name__ == "__main__":

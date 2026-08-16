@@ -31,8 +31,12 @@ def settings_for(dataset: str, config: dict[str, object]) -> EnvironmentSettings
         enforce_prerequisites=bool(config["enforce_prerequisites"]),
         avoid_immediate_repeat=bool(config["avoid_immediate_repeat"]),
         max_episode_steps=int(config["max_episode_steps"]),
+        preserve_trajectory_continuity=bool(
+            config.get("preserve_trajectory_continuity", True)
+        ),
         ednet_session_gap_hours=float(config["ednet_session_gap_hours"]),
         reward_clip=float(config["reward_clip"]),
+        mastery_progression_scale=float(config.get("mastery_progression_scale", 10.0)),
         reward_weights=RewardWeights(**dict(config["reward_weights"])),
     )
 
@@ -83,8 +87,7 @@ def main() -> None:
         replay_steps = 0
         terminated = truncated = False
         while not (terminated or truncated):
-            action = int(reset_info["logged_action"] if replay_steps == 0 else step_info["next_logged_action"])
-            observation, _, terminated, truncated, step_info = environment.step(action)
+            observation, _, terminated, truncated, step_info = environment.replay_logged_step()
             replay_steps += 1
 
         catalog = environment.action_catalog.frame

@@ -57,8 +57,11 @@
     .run-title { display:flex; gap:10px; align-items:center; }
     .badge { padding:4px 8px; border-radius:999px; background:#ece9df; color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; }
     .badge.running { background:#e0ecff; color:var(--blue); }
+    .badge.cancelling { background:#fff1db; color:#7d4b17; }
     .badge.complete { background:var(--mint); color:var(--green); }
     .badge.failed { background:#f8dede; color:var(--red); }
+    .badge.cancelled { background:#ece9df; color:var(--muted); }
+    .cancel { border:1px solid #e4b7b7; background:#fff; color:var(--red); padding:6px 9px; border-radius:7px; cursor:pointer; font-weight:800; font-size:11px; }
     .stage { color:var(--muted); font-size:12px; margin:5px 0 12px; }
     .progress-track { height:8px; border-radius:999px; background:#e5e2d9; overflow:hidden; margin:8px 0 4px; }
     .progress-fill { height:100%; min-width:2px; border-radius:inherit; background:linear-gradient(90deg,var(--green),#38a879); }
@@ -121,6 +124,7 @@
             <label>Final evaluation rows<input id="evaluationRows" type="number" value="512" min="0"><small>0 means the complete split.</small></label>
             <label>Evaluation split<select id="evaluationSplit"><option value="validation">Validation</option><option value="test">Temporal test</option></select></label>
             <label>State dimension<input id="bcStateDim" type="number" value="64" min="1"></label>
+            <label class="wide">Phase 7 state checkpoint<input id="stateCheckpoint" type="text" placeholder="outputs/.../best_checkpoint.pt"><small>Required for full BC/RL runs; bounded development runs may leave this blank.</small></label>
             <label>History length<input id="maxHistory" type="number" value="127" min="1"></label>
             <label>Episode step cap<input id="maxEpisodeSteps" type="number" value="128" min="1"></label>
             <label>Minimum support<input id="minSupport" type="number" value="5" min="1"></label>
@@ -169,7 +173,7 @@
       <label class="check" id="validateLabel"><input id="validate" type="checkbox" checked> Run held-out validation</label>
       <button class="launch" id="launch">Start CPU experiment</button>
       <div class="stage">You can click Start again immediately to queue another independent run. Each run gets its own output directory and live result card.</div>
-      <div class="notice">Phase 9 currently uses provisional state vectors. BC results remain developmental until a state-model checkpoint is connected to Phase 8.</div>
+      <div class="notice">Full BC/RL runs require a validation-selected Phase 7 checkpoint. Provisional state vectors are allowed only for explicitly bounded development runs.</div>
     </aside>
     <section class="workspace">
       <div class="summary">
@@ -209,7 +213,7 @@
     ['dataset','bcScope','bcSchedule','episodes','bcSteps','bcEpochs','bcBatch','metricInterval','evaluationRows','stateScope','epochs','stateBatch','trainWindows','validationWindows'].forEach(id=>$(id).addEventListener('input',updateVisibility));
     $('launch').onclick=async()=>{
       const parameters=model==='bc'?{
-        data_scope:$('bcScope').value,schedule:$('bcSchedule').value,episodes:number('episodes'),steps:number('bcSteps'),epochs:number('bcEpochs'),batch_size:number('bcBatch'),learning_rate:number('bcLr'),accuracy_rows:number('accuracyRows'),metric_interval:number('metricInterval'),gamma:number('gamma'),beta:number('beta'),cpu_threads:number('bcThreads'),seed:number('bcSeed'),bootstrap_replicates:number('bootstrap'),evaluation_rows:number('evaluationRows'),evaluation_split:$('evaluationSplit').value,state_dim:number('bcStateDim'),max_history:number('maxHistory'),max_episode_steps:number('maxEpisodeSteps'),min_train_support:number('minSupport'),mastery_threshold:number('masteryThreshold'),reward_clip:number('rewardClip'),enforce_prerequisites:$('prerequisites').checked,avoid_immediate_repeat:$('avoidRepeat').checked,run_validation:$('validate').checked
+        data_scope:$('bcScope').value,schedule:$('bcSchedule').value,episodes:number('episodes'),steps:number('bcSteps'),epochs:number('bcEpochs'),batch_size:number('bcBatch'),learning_rate:number('bcLr'),accuracy_rows:number('accuracyRows'),metric_interval:number('metricInterval'),gamma:number('gamma'),beta:number('beta'),cpu_threads:number('bcThreads'),seed:number('bcSeed'),bootstrap_replicates:number('bootstrap'),evaluation_rows:number('evaluationRows'),evaluation_split:$('evaluationSplit').value,state_dim:number('bcStateDim'),state_checkpoint:$('stateCheckpoint').value,max_history:number('maxHistory'),max_episode_steps:number('maxEpisodeSteps'),min_train_support:number('minSupport'),mastery_threshold:number('masteryThreshold'),reward_clip:number('rewardClip'),enforce_prerequisites:$('prerequisites').checked,avoid_immediate_repeat:$('avoidRepeat').checked,run_validation:$('validate').checked
       }:{
         variant:$('variant').value,data_scope:$('stateScope').value,epochs:number('epochs'),batch_size:number('stateBatch'),max_train_windows:number('trainWindows'),max_validation_windows:number('validationWindows'),learning_rate:number('stateLr'),cpu_threads:number('cpuThreads'),seed:number('stateSeed'),weight_decay:number('weightDecay'),warmup_steps:number('warmupSteps'),minimum_lr_ratio:number('minLrRatio'),gradient_clip_norm:number('gradientClip'),early_stopping_patience:number('patience'),early_stopping_min_delta:number('earlyDelta'),window_length:number('windowLength'),max_ranking_examples:number('rankingExamples'),state_dim:number('stateDim'),num_heads:number('numHeads'),transformer_layers:number('transformerLayers'),graph_layers:number('graphLayers'),feedforward_dim:number('feedforwardDim'),max_sequence_length:number('maxSequenceLength'),dropout:number('dropout'),item_weight:number('itemWeight'),action_weight:number('actionWeight'),correctness_weight:number('correctnessWeight'),mastery_weight:number('masteryWeight'),run_validation:true
       };
@@ -235,7 +239,14 @@
       const line=(vals,color)=>{if(!vals.length)return '';return `<polyline fill="none" stroke="${color}" stroke-width="3" points="${vals.map((v,i)=>`${10+i*580/Math.max(vals.length-1,1)},${135-v*120}`).join(' ')}"/>`;};
       return `<svg class="chart" viewBox="0 0 600 150" preserveAspectRatio="none"><line x1="10" y1="135" x2="590" y2="135" stroke="#d8d5ca"/>${line(a,'#176b4d')}${line(b,'#ed8b38')}</svg><div class="legend"><span><i style="background:#176b4d"></i>Training accuracy</span><span><i style="background:#ed8b38"></i>Validation accuracy</span></div>`;
     }
-    function render(runs){ const active=runs.filter(r=>r.status==='running'||r.status==='queued').length, complete=runs.filter(r=>r.status==='complete').length; $('activeRuns').textContent=active; $('runSummary').textContent=`${active} running · ${complete} completed`; if(!runs.length){$('runList').className='empty';$('runList').textContent='No dashboard experiments yet.';return;} $('runList').className=''; $('runList').innerHTML=runs.map(r=>{const latest=r.metrics.at(-1)||{}; const accuracy=r.model==='bc'?(latest.validation_accuracy??latest.train_accuracy):(latest.validation_correctness_accuracy??latest.train_correctness_accuracy); return `<article class="run"><div class="run-head"><div><div class="run-title"><h3>${r.model==='bc'?'Behaviour Cloning':'State model'} · ${r.dataset.toUpperCase()}</h3><span class="badge ${r.status}">${r.status}</span></div><div class="stage">${r.stage} · ${r.metrics.length} metric events · latest accuracy ${pct(accuracy)}</div>${progress(r,latest)}</div><span class="eyebrow">${r.id}</span></div>${chart(r.metrics,r.model)}${scorecard(latest,r.model)}${r.error?`<div class="notice">${r.error}</div>`:''}<details><summary>Live output</summary><pre>${r.logs.join('\n').replaceAll('&','&amp;').replaceAll('<','&lt;')}</pre></details></article>`;}).join(''); }
+    async function cancelRun(runId){
+      if(!confirm(`Stop run ${runId}? Its partial checkpoint and metrics will not be treated as final results.`))return;
+      const response=await fetch(`/api/runs/${runId}/cancel`,{method:'POST'});
+      const data=await response.json();
+      if(!response.ok)alert(data.error||'Could not cancel run');
+      await refresh();
+    }
+    function render(runs){ const active=runs.filter(r=>['running','queued','cancelling'].includes(r.status)).length, complete=runs.filter(r=>r.status==='complete').length; $('activeRuns').textContent=active; $('runSummary').textContent=`${active} running · ${complete} completed`; if(!runs.length){$('runList').className='empty';$('runList').textContent='No dashboard experiments yet.';return;} $('runList').className=''; $('runList').innerHTML=runs.map(r=>{const latest=r.metrics.at(-1)||{}; const accuracy=r.model==='bc'?(latest.validation_accuracy??latest.train_accuracy):(latest.validation_correctness_accuracy??latest.train_correctness_accuracy); const cancel=['running','queued'].includes(r.status)?`<button class="cancel" onclick="cancelRun('${r.id}')">Stop run</button>`:''; return `<article class="run"><div class="run-head"><div><div class="run-title"><h3>${r.model==='bc'?'Behaviour Cloning':'State model'} · ${r.dataset.toUpperCase()}</h3><span class="badge ${r.status}">${r.status}</span></div><div class="stage">${r.stage} · ${r.metrics.length} metric events · latest accuracy ${pct(accuracy)}</div>${progress(r,latest)}</div><div><span class="eyebrow">${r.id}</span>${cancel}</div></div>${chart(r.metrics,r.model)}${scorecard(latest,r.model)}${r.error?`<div class="notice">${r.error}</div>`:''}<details><summary>Live output</summary><pre>${r.logs.join('\n').replaceAll('&','&amp;').replaceAll('<','&lt;')}</pre></details></article>`;}).join(''); }
     async function refresh(){ try{const [runs,status]=await Promise.all([fetch('/api/runs').then(r=>r.json()),fetch('/api/status').then(r=>r.json())]); render(runs); $('currentBc').textContent=status.bc?pct(status.bc.validation_accuracy):'—'; const states=status.state||[]; $('currentState').textContent=states.length?pct(states.at(-1).correctness_accuracy):'Not trained'; $('updated').textContent='Updated '+new Date().toLocaleTimeString();}catch(e){$('updated').textContent='Disconnected';} }
     updateVisibility(); refresh(); setInterval(refresh,1000);
   </script>

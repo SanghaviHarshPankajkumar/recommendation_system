@@ -299,11 +299,17 @@ class CandidateRankingMetrics:
 
 
 class ValidationMetrics:
-    def __init__(self, ranking: CandidateRankingMetrics):
+    def __init__(self, ranking: CandidateRankingMetrics, loss_weights: dict[str, float]):
         self.ranking = ranking
+        self.loss_weights = dict(loss_weights)
         self.correctness = BinaryMetrics()
         self.mastery = BinaryMetrics()
-        self.loss_sums: dict[str, float] = {name: 0.0 for name in ("total", "item", "action", "correctness", "mastery")}
+        self.loss_sums: dict[str, float] = {
+            name: 0.0 for name in ("item", "action", "correctness", "mastery")
+        }
+        self.loss_counts: dict[str, int] = {
+            name: 0 for name in ("item", "action", "correctness", "mastery")
+        }
         self.target_count = 0
         self.action_correct = 0
 
@@ -311,16 +317,23 @@ class ValidationMetrics:
         mask = batch["target_mask"].bool()
         count = int(mask.sum())
         self.target_count += count
-        for name, value in losses.items():
-            self.loss_sums[name] += float(value.detach().cpu()) * count
         correctness_targets = batch["target_correctness"].float()
         correctness_mask = mask & correctness_targets.ge(0)
+        target_concepts = batch["target_concept_tokens"].long()
+        mastery_mask = target_concepts.ge(2) & mask.unsqueeze(-1) & correctness_targets.ge(0).unsqueeze(-1)
+        component_counts = {
+            "item": count,
+            "action": count,
+            "correctness": int(correctness_mask.sum()),
+            "mastery": int(mastery_mask.sum()),
+        }
+        for name, component_count in component_counts.items():
+            self.loss_sums[name] += float(losses[name].detach().cpu()) * component_count
+            self.loss_counts[name] += component_count
         if torch.any(correctness_mask):
             self.correctness.update(
                 torch.sigmoid(outputs["correctness_logits"][correctness_mask]), correctness_targets[correctness_mask]
             )
-        target_concepts = batch["target_concept_tokens"].long()
-        mastery_mask = target_concepts.ne(0) & mask.unsqueeze(-1) & correctness_targets.ge(0).unsqueeze(-1)
         if torch.any(mastery_mask):
             mastery_probabilities = outputs["mastery_probabilities"].gather(-1, target_concepts.clamp_min(0))
             mastery_targets = correctness_targets.unsqueeze(-1).expand_as(mastery_probabilities)
@@ -331,15 +344,23 @@ class ValidationMetrics:
         self.ranking.update_model(
             outputs["item_logits"],
             batch["target_item_tokens"],
-            batch["module_tokens"][:, 1:],
+            batch["module_tokens"][:, :-1],
             mask,
         )
 
     def compute(self) -> dict[str, object]:
         denominator = max(self.target_count, 1)
+        component_losses = {
+            name: self.loss_sums[name] / max(self.loss_counts[name], 1)
+            for name in self.loss_sums
+        }
+        component_losses["total"] = sum(
+            self.loss_weights[name] * component_losses[name] for name in self.loss_weights
+        )
         return {
             "target_count": self.target_count,
-            "losses": {name: value / denominator for name, value in self.loss_sums.items()},
+            "losses": component_losses,
+            "loss_counts": self.loss_counts,
             "correctness": self.correctness.compute(),
             "mastery": self.mastery.compute(),
             "action_accuracy": self.action_correct / denominator,
@@ -469,7 +490,7 @@ class Phase7PretrainingPipeline:
         for batch in self._stream(dataset, "validation", 0, False):
             mask = batch["target_mask"].bool()
             target_count += int(mask.sum())
-            ranking.update_popularity(batch["target_item_tokens"], batch["module_tokens"][:, 1:], mask)
+            ranking.update_popularity(batch["target_item_tokens"], batch["module_tokens"][:, :-1], mask)
         result = {"status": "complete", "training_required": False, "validation_targets": target_count, "candidate_ranking": ranking.compute()}
         output_dir = Path(str(self.config["output_root"])) / dataset / "popularity"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -587,7 +608,8 @@ class Phase7PretrainingPipeline:
 
     def _train_epoch(self, model, graph, loss_function, optimizer, scheduler, dataset, epoch, global_step):
         model.train()
-        totals = {name: 0.0 for name in ("total", "item", "action", "correctness", "mastery")}
+        totals = {name: 0.0 for name in ("item", "action", "correctness", "mastery")}
+        loss_counts = {name: 0 for name in totals}
         targets = 0
         correctness_correct = correctness_count = action_correct = 0
         for cpu_batch in self._stream(dataset, "train", epoch, True):
@@ -603,11 +625,23 @@ class Phase7PretrainingPipeline:
             scheduler.step()
             count = int(batch["target_mask"].sum())
             targets += count
-            for name, value in losses.items():
-                totals[name] += float(value.detach().cpu()) * count
             mask = batch["target_mask"].bool()
             correctness_targets = batch["target_correctness"].float()
             correctness_mask = mask & correctness_targets.ge(0)
+            mastery_mask = (
+                batch["target_concept_tokens"].long().ge(2)
+                & mask.unsqueeze(-1)
+                & correctness_targets.ge(0).unsqueeze(-1)
+            )
+            component_counts = {
+                "item": count,
+                "action": count,
+                "correctness": int(correctness_mask.sum()),
+                "mastery": int(mastery_mask.sum()),
+            }
+            for name, component_count in component_counts.items():
+                totals[name] += float(losses[name].detach().cpu()) * component_count
+                loss_counts[name] += component_count
             if torch.any(correctness_mask):
                 correctness_predictions = outputs["correctness_logits"][correctness_mask].ge(0)
                 correctness_correct += int(
@@ -622,6 +656,13 @@ class Phase7PretrainingPipeline:
             )
             global_step += 1
             if self.progress_callback is not None:
+                component_losses = {
+                    name: totals[name] / max(loss_counts[name], 1) for name in totals
+                }
+                running_total_loss = sum(
+                    loss_function.weights[name] * component_losses[name]
+                    for name in loss_function.weights
+                )
                 self.progress_callback(
                     {
                         "model": "state",
@@ -629,13 +670,24 @@ class Phase7PretrainingPipeline:
                         "variant": model.config.variant,
                         "epoch": epoch + 1,
                         "step": global_step,
-                        "train_total_loss": totals["total"] / max(targets, 1),
+                        "train_total_loss": running_total_loss,
                         "train_correctness_accuracy": correctness_correct / max(correctness_count, 1),
                         "train_action_accuracy": action_correct / max(targets, 1),
                         "learning_rate": scheduler.get_last_lr()[0],
                     }
                 )
-        return {"target_count": targets, "losses": {name: value / max(targets, 1) for name, value in totals.items()}}, global_step
+        component_losses = {
+            name: totals[name] / max(loss_counts[name], 1) for name in totals
+        }
+        component_losses["total"] = sum(
+            loss_function.weights[name] * component_losses[name]
+            for name in loss_function.weights
+        )
+        return {
+            "target_count": targets,
+            "losses": component_losses,
+            "loss_counts": loss_counts,
+        }, global_step
 
     def _validate(self, model, graph, loss_function, dataset):
         model.eval()
@@ -645,7 +697,8 @@ class Phase7PretrainingPipeline:
                 sequence_dir / "candidate_catalog.csv.gz",
                 list(self.config["ranking_ks"]),
                 int(self.config["max_ranking_examples"]),
-            )
+            ),
+            loss_function.weights,
         )
         with torch.no_grad():
             for cpu_batch in self._stream(dataset, "validation", 0, False):

@@ -271,7 +271,17 @@ class KnowledgeAwareStudentStateModel(nn.Module):
         self.fusion_gate = nn.Linear(dim * 3, 3)
         self.fusion_norm = nn.LayerNorm(dim)
         self.action_head = nn.Linear(dim, config.action_vocab_size)
-        self.correctness_head = nn.Linear(dim, 1)
+        # Correctness is a property of a learner-state/item pair, not of the
+        # learner state alone.  Keep the causal state reusable by the policy,
+        # then query it with the candidate item and its known metadata.
+        self.correctness_query_norm = nn.LayerNorm(dim)
+        self.correctness_head = nn.Sequential(
+            nn.Linear(dim * 4, dim),
+            nn.GELU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(dim, 1),
+        )
+        self.correctness_item_bias = nn.Embedding(config.item_vocab_size, 1, padding_idx=0)
         self.item_bias = nn.Parameter(torch.zeros(config.item_vocab_size))
         self.register_buffer("item_to_node", graph.item_to_node.clone(), persistent=True)
         self.register_buffer("concept_to_node", graph.concept_to_node.clone(), persistent=True)
@@ -281,6 +291,7 @@ class KnowledgeAwareStudentStateModel(nn.Module):
         for embedding in (
             self.item_embedding, self.action_embedding, self.item_type_embedding, self.concept_embedding,
             self.module_embedding, self.source_embedding, self.correctness_embedding, self.position_embedding,
+            self.correctness_item_bias,
         ):
             nn.init.normal_(embedding.weight, std=0.02)
             if embedding.padding_idx is not None:
@@ -363,7 +374,7 @@ class KnowledgeAwareStudentStateModel(nn.Module):
         gate_weights = torch.softmax(gate_logits, dim=-1)
         residual = history_states if active_modalities[0] else torch.zeros_like(history_states)
         fused = self.fusion_norm(residual + (transformed * gate_weights.unsqueeze(-1)).sum(dim=-2))
-        return {
+        outputs = {
             "student_states": fused,
             "history_states": history_states,
             "graph_context": graph_context,
@@ -372,8 +383,61 @@ class KnowledgeAwareStudentStateModel(nn.Module):
             "fusion_weights": gate_weights,
             "item_logits": F.linear(fused, self.item_embedding.weight, self.item_bias),
             "action_logits": self.action_head(fused),
-            "correctness_logits": self.correctness_head(fused).squeeze(-1),
         }
+        if "target_item_tokens" in batch:
+            if "target_concept_tokens" not in batch:
+                raise KeyError("target_concept_tokens are required to score candidate correctness")
+            outputs["correctness_logits"] = self.score_candidate_correctness(
+                fused,
+                batch["target_item_tokens"].long(),
+                batch["target_concept_tokens"].long(),
+                graph_states,
+            )
+        return outputs
+
+    def score_candidate_correctness(
+        self,
+        student_states: Tensor,
+        candidate_item_tokens: Tensor,
+        candidate_concept_tokens: Tensor,
+        graph_states: Tensor,
+    ) -> Tensor:
+        """Return logits for P(correct | causal state, candidate metadata).
+
+        Candidate identity and concepts are known when an item is considered,
+        so they are valid query inputs.  Candidate outcomes, scores, elapsed
+        time, and engagement are deliberately absent from this branch.
+        """
+        if candidate_item_tokens.shape != student_states.shape[:-1]:
+            raise ValueError("Candidate-item shape must match student-state sequence dimensions")
+        if candidate_concept_tokens.shape[:-1] != student_states.shape[:-1]:
+            raise ValueError("Candidate-concept shape must match student-state sequence dimensions")
+
+        # Token 0 is padding and token 1 is unknown; neither represents a real
+        # concept that should contribute a skill query.
+        concept_mask = candidate_concept_tokens.ge(2).unsqueeze(-1)
+        concept_sum = (self.concept_embedding(candidate_concept_tokens) * concept_mask).sum(dim=-2)
+        concept_mean = concept_sum / concept_mask.sum(dim=-2).clamp_min(1)
+        candidate_graph = self._gather_graph(candidate_item_tokens, self.item_to_node, graph_states)
+        candidate_graph = candidate_graph + self._gather_concept_graph(candidate_concept_tokens, graph_states)
+        candidate_query = self.correctness_query_norm(
+            self.item_embedding(candidate_item_tokens)
+            + concept_mean
+            + self.graph_projection(candidate_graph)
+        )
+        interaction = torch.cat(
+            [
+                student_states,
+                candidate_query,
+                student_states * candidate_query,
+                torch.abs(student_states - candidate_query),
+            ],
+            dim=-1,
+        )
+        return (
+            self.correctness_head(interaction).squeeze(-1)
+            + self.correctness_item_bias(candidate_item_tokens).squeeze(-1)
+        )
 
     @staticmethod
     def _gather_graph(tokens: Tensor, mapping: Tensor, graph_states: Tensor) -> Tensor:
@@ -409,8 +473,12 @@ class KnowledgeAwareMultiTaskLoss(nn.Module):
         item_targets = batch["target_item_tokens"].long()
         action_targets = batch["target_action_tokens"].long()
         correctness_targets = batch["target_correctness"].float()
-        item_loss = F.cross_entropy(outputs["item_logits"][mask], item_targets[mask])
-        action_loss = F.cross_entropy(outputs["action_logits"][mask], action_targets[mask])
+        if torch.any(mask):
+            item_loss = F.cross_entropy(outputs["item_logits"][mask], item_targets[mask])
+            action_loss = F.cross_entropy(outputs["action_logits"][mask], action_targets[mask])
+        else:
+            item_loss = outputs["item_logits"].sum() * 0
+            action_loss = outputs["action_logits"].sum() * 0
         correctness_mask = mask & correctness_targets.ge(0)
         if torch.any(correctness_mask):
             correctness_loss = F.binary_cross_entropy_with_logits(
@@ -420,7 +488,7 @@ class KnowledgeAwareMultiTaskLoss(nn.Module):
             correctness_loss = outputs["correctness_logits"].sum() * 0
 
         target_concepts = batch["target_concept_tokens"].long()
-        concept_mask = target_concepts.ne(0) & mask.unsqueeze(-1) & correctness_targets.ge(0).unsqueeze(-1)
+        concept_mask = target_concepts.ge(2) & mask.unsqueeze(-1) & correctness_targets.ge(0).unsqueeze(-1)
         if torch.any(concept_mask):
             gathered_mastery = outputs["mastery_logits"].gather(-1, target_concepts.clamp_min(0))
             expanded_correctness = correctness_targets.unsqueeze(-1).expand_as(gathered_mastery)

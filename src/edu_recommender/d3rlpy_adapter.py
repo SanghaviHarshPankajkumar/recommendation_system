@@ -19,8 +19,9 @@ class D3RLPYDatasetBundle:
     """d3rlpy arrays plus recommendation metadata that d3rlpy does not store.
 
     Dynamic eligible-action lists stay sparse and outside the feature vector. A
-    dense EdNet mask would waste roughly 21 KB per transition and is unnecessary
-    for BC/CQL fitting.
+    dense EdNet mask would waste roughly 21 KB per transition. This metadata is
+    sufficient for BC selection, but stock d3rlpy CQL is deliberately rejected
+    because it cannot consume the masks during training.
     """
 
     dataset_name: str
@@ -185,6 +186,7 @@ def create_d3rlpy_algorithm(
     device: bool | int | str | None = False,
     cql_alpha: float = 1.0,
     bc_beta: float = 0.5,
+    dynamic_action_masks: bool = True,
 ) -> Any:
     """Construct an untrained d3rlpy algorithm; this function never calls fit."""
 
@@ -196,6 +198,12 @@ def create_d3rlpy_algorithm(
             beta=float(bc_beta),
         )
     elif algorithm == "discrete_cql":
+        if dynamic_action_masks:
+            raise ValueError(
+                "Stock d3rlpy DiscreteCQL does not apply dynamic eligibility masks "
+                "inside Bellman targets or the conservative loss. Use a mask-aware "
+                "parametric Q(s, action_features) implementation instead."
+            )
         config = DiscreteCQLConfig(
             batch_size=int(batch_size),
             learning_rate=float(learning_rate),

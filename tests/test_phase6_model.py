@@ -99,6 +99,42 @@ class StudentStateModelTests(unittest.TestCase):
             second = model(changed, self.graph)["student_states"]
         self.assertTrue(torch.allclose(first[0, :4], second[0, :4], atol=1e-6))
 
+    def test_correctness_is_conditioned_on_candidate_without_changing_state(self) -> None:
+        model = KnowledgeAwareStudentStateModel(self.config, self.graph).eval()
+        first_batch = tiny_batch()
+        second_batch = {name: value.clone() for name, value in first_batch.items()}
+        second_batch["target_item_tokens"][0, 1] = 5
+        second_batch["target_concept_tokens"][0, 1] = torch.tensor([0, 0])
+        with torch.no_grad():
+            first = model(first_batch, self.graph)
+            second = model(second_batch, self.graph)
+        self.assertTrue(torch.allclose(first["student_states"], second["student_states"], atol=1e-6))
+        self.assertFalse(
+            torch.allclose(
+                first["correctness_logits"][0, 1],
+                second["correctness_logits"][0, 1],
+                atol=1e-6,
+            )
+        )
+
+    def test_state_encoding_does_not_require_a_candidate_query(self) -> None:
+        model = KnowledgeAwareStudentStateModel(self.config, self.graph).eval()
+        batch = tiny_batch()
+        del batch["target_item_tokens"]
+        del batch["target_concept_tokens"]
+        with torch.no_grad():
+            outputs = model(batch, self.graph)
+        self.assertEqual(outputs["student_states"].shape, (2, 5, 16))
+        self.assertNotIn("correctness_logits", outputs)
+
+    def test_unknown_concept_is_not_used_as_mastery_supervision(self) -> None:
+        model = KnowledgeAwareStudentStateModel(self.config, self.graph)
+        batch = tiny_batch()
+        batch["target_concept_tokens"].fill_(1)
+        outputs = model(batch, self.graph)
+        losses = KnowledgeAwareMultiTaskLoss()(outputs, batch)
+        self.assertEqual(float(losses["mastery"].detach()), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
