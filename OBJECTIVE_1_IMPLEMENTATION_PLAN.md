@@ -544,6 +544,22 @@ The difference between source rows and native transitions is expected: d3rlpy om
 
 These artifacts still use the provisional state encoder and therefore must not be used for actual BC/CQL fitting or accuracy claims.
 
+### Phase 9 policy evaluation implementation
+
+The missing fixed-data policy evaluator is now implemented. It fits the popularity baseline only on bounded training episodes and evaluates it on separate chronological validation episodes. Trained BC/CQL checkpoints will use the same held-out evaluator after Phase 7 states and policy training are complete.
+
+Implemented metrics are Top-1 logged-action agreement, Hit Rate@5/10/20, NDCG@5/10/20, MRR, logged/selected action scores, raw and masked eligible-action rates, catalog unsupported-action rate, recommendation coverage, reward/episode-return diagnostics, and episode-clustered bootstrap 95% confidence intervals. Logged rewards are explicitly labelled as historical diagnostics, not counterfactual policy returns. FQE, importance sampling, and doubly robust evaluation remain disabled until the necessary trained policy/value models and reliable behavior probabilities exist.
+
+Development-only held-out popularity results confirm the evaluator runs end to end: EdNet used 283 validation transitions and OULAD used 369. These bounded results use provisional states and only four validation episodes per dataset, so they are pipeline checks rather than final baseline results.
+
+Evaluation artifacts:
+
+- `src/edu_recommender/offline_policy_evaluation.py`: dataset validation, policy scorers, ranking/safety/coverage metrics, reward diagnostics, and clustered confidence intervals.
+- `configs/phase9_evaluation.json`: evaluation cutoffs, checkpoint paths, bootstrap settings, and provisional-state guard.
+- `scripts/evaluate_phase9_policy.py`: popularity/BC/CQL evaluation command.
+- `tests/test_offline_policy_evaluation.py`: metric, bootstrap, mask-safety, and metadata tests.
+- `outputs/phase9_evaluation/popularity_manifest.json`: current held-out development baseline result.
+
 ## Next action
 
 The next action remains a larger but controlled Phase 7 experiment. Linear extrapolation from the CPU micro-pilot suggests that the existing five-epoch, 10,000-training-window configuration across both neural variants and datasets could require roughly 130-160 CPU hours. Before authorizing that run, the training code should avoid recomputing unused graph branches for ablation variants and consider sampled/adaptive item softmax or candidate-restricted training. A 250-window, one-dataset, one-variant timing run is the safer next scale checkpoint. After validation selects an encoder checkpoint, regenerate Phase 8/9 arrays with that checkpoint, train BC first, and then train Discrete CQL. Discrete IQL remains a separate custom work item.

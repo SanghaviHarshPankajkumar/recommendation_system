@@ -4,6 +4,7 @@
     "output_root": "outputs/phase9_d3rlpy"
   },
   "dataset": "both",
+  "evaluation_split": "validation",
   "development_max_episodes": 4,
   "environment": {
     "split": "train",

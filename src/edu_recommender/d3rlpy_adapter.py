@@ -223,6 +223,14 @@ class MaskedD3RLPYActionSelector:
         self.score_batch_size = int(score_batch_size)
 
     def select(self, observation: np.ndarray, eligible_actions: np.ndarray) -> int:
+        eligible, scores = self.score_eligible(observation, eligible_actions)
+        return int(eligible[int(np.argmax(scores))])
+
+    def score_eligible(
+        self, observation: np.ndarray, eligible_actions: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return eligible action ids and their BC logits or CQL Q-values."""
+
         observation = np.asarray(observation, dtype=np.float32)
         eligible = np.unique(np.asarray(eligible_actions, dtype=np.int64))
         if observation.ndim != 1:
@@ -240,8 +248,7 @@ class MaskedD3RLPYActionSelector:
                 scores.append(
                     np.asarray(self.algorithm.predict_value(batch, candidates), dtype=np.float32)
                 )
-            values = np.concatenate(scores)
-            return int(eligible[int(np.argmax(values))])
+            return eligible, np.concatenate(scores)
 
         # d3rlpy 2.8.1 DiscreteBC: use the categorical policy logits so the
         # eligibility mask is applied before argmax.
@@ -253,6 +260,5 @@ class MaskedD3RLPYActionSelector:
         with torch.no_grad():
             logits = self.algorithm.impl.modules.imitator(torch_observation).logits[0]
         eligible_tensor = torch.as_tensor(eligible, dtype=torch.long, device=logits.device)
-        local_index = int(torch.argmax(logits[eligible_tensor]).item())
-        return int(eligible[local_index])
-
+        scores = logits[eligible_tensor].detach().float().cpu().numpy()
+        return eligible, scores

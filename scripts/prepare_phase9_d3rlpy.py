@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +39,25 @@ def environment_settings(dataset: str, values: dict[str, object]) -> Environment
         max_episode_steps=int(values["max_episode_steps"]),
         ednet_session_gap_hours=float(values["ednet_session_gap_hours"]),
         reward_clip=float(values["reward_clip"]),
+    )
+
+
+def save_bundle(bundle, destination: Path) -> None:
+    eligibility_offsets = np.zeros(len(bundle.eligible_actions) + 1, dtype=np.int64)
+    eligibility_offsets[1:] = np.cumsum(
+        [len(actions) for actions in bundle.eligible_actions], dtype=np.int64
+    )
+    eligibility_values = np.concatenate(bundle.eligible_actions).astype(np.int32, copy=False)
+    np.savez_compressed(
+        destination,
+        observations=bundle.observations,
+        actions=bundle.actions,
+        rewards=bundle.rewards,
+        terminals=bundle.terminals,
+        timeouts=bundle.timeouts,
+        eligibility_offsets=eligibility_offsets,
+        eligibility_values=eligibility_values,
+        episode_ids=np.asarray(bundle.episode_ids, dtype=np.str_),
     )
 
 
@@ -85,6 +105,11 @@ def main() -> None:
         adapter = D3RLPYTransitionAdapter(module_count=module_count)
         bundle = adapter.from_environment(environment)
         native_dataset = bundle.to_mdp_dataset()
+        evaluation_settings = replace(settings, split=str(config["evaluation_split"]))
+        evaluation_environment = build_environment(
+            evaluation_settings, sequence_root, encoder, max_episodes=max_episodes
+        )
+        evaluation_bundle = adapter.from_environment(evaluation_environment)
 
         # Construct both algorithm objects to validate configuration and action-space
         # compatibility. Deliberately do not call fit or fit_online.
@@ -103,23 +128,29 @@ def main() -> None:
 
         dataset_root = output_root / dataset
         dataset_root.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
-            dataset_root / "development_dataset.npz",
-            observations=bundle.observations,
-            actions=bundle.actions,
-            rewards=bundle.rewards,
-            terminals=bundle.terminals,
-            timeouts=bundle.timeouts,
-        )
+        save_bundle(bundle, dataset_root / "development_dataset.npz")
+        save_bundle(evaluation_bundle, dataset_root / "development_validation_dataset.npz")
         summary = {
             **bundle.summary(),
             "native_action_size": int(native_dataset.dataset_info.action_size),
             "module_feature_size": adapter.module_feature_size,
             "algorithms_constructed_not_fitted": algorithm_types,
             "dense_action_masks_saved": False,
+            "sparse_action_masks_saved": True,
             "training_started": False,
         }
         write_json(summary, dataset_root / "validation.json")
+        evaluation_summary = {
+            **evaluation_bundle.summary(),
+            "split": evaluation_settings.split,
+            "native_action_size": int(evaluation_bundle.to_mdp_dataset().dataset_info.action_size),
+            "module_feature_size": adapter.module_feature_size,
+            "dense_action_masks_saved": False,
+            "sparse_action_masks_saved": True,
+            "training_started": False,
+        }
+        write_json(evaluation_summary, dataset_root / "evaluation_validation.json")
+        summary["held_out_evaluation"] = evaluation_summary
         manifest["datasets"][dataset] = summary
 
     manifest["status"] = "complete"

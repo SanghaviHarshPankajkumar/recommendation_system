@@ -1,0 +1,21 @@
+{
+  "paths": {
+    "phase9_root": "outputs/phase9_d3rlpy",
+    "output_root": "outputs/phase9_evaluation"
+  },
+  "dataset": "both",
+  "policy": "popularity",
+  "checkpoints": {
+    "ednet": null,
+    "oulad": null
+  },
+  "ranking_ks": [5, 10, 20],
+  "bootstrap_replicates": 1000,
+  "seed": 42,
+  "max_transitions": null,
+  "allow_provisional_model_evaluation": false,
+  "notes": {
+    "policy_options": ["popularity", "discrete_bc", "discrete_cql"],
+    "reward_warning": "Logged rewards are dataset diagnostics. Use a trained FQE model for estimated policy return."
+  }
+}
